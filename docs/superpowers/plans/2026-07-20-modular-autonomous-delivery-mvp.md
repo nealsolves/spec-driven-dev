@@ -87,6 +87,7 @@ Create `.gitignore`:
 
 ```gitignore
 .worktrees/
+.superpowers/
 .DS_Store
 .venv/
 __pycache__/
