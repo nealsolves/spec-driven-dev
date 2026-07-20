@@ -12,7 +12,7 @@
       "additionalProperties": false,
       "required": ["rules"],
       "properties": {
-        "rules": {"$ref": "#/$defs/path_list"}
+        "rules": {"$ref": "#/$defs/rule_path_list"}
       }
     },
     "facts": {
@@ -28,10 +28,7 @@
       "minProperties": 1,
       "additionalProperties": false,
       "patternProperties": {
-        "^[a-z][a-z0-9_]*$": {
-          "type": "string",
-          "pattern": "^workflows/[a-z0-9-]+\\.md$"
-        }
+        "^[a-z][a-z0-9_]*$": {"$ref": "#/$defs/workflow_path"}
       }
     },
     "classification_rules": {
@@ -48,12 +45,22 @@
     }
   },
   "$defs": {
-    "path_list": {
+    "rule_path": {
+      "type": "string",
+      "pattern": "^rules/[a-z0-9-]+\\.md$"
+    },
+    "workflow_path": {
+      "type": "string",
+      "pattern": "^workflows/[a-z0-9-]+\\.md$"
+    },
+    "rule_path_list": {
       "type": "array",
-      "items": {
-        "type": "string",
-        "pattern": "^(rules|workflows)/[a-z0-9-]+\\.md$"
-      },
+      "items": {"$ref": "#/$defs/rule_path"},
+      "uniqueItems": true
+    },
+    "workflow_path_list": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/workflow_path"},
       "uniqueItems": true
     },
     "fact_record": {
@@ -91,8 +98,8 @@
       "additionalProperties": false,
       "minProperties": 1,
       "properties": {
-        "workflows": {"$ref": "#/$defs/path_list"},
-        "rules": {"$ref": "#/$defs/path_list"}
+        "workflows": {"$ref": "#/$defs/workflow_path_list"},
+        "rules": {"$ref": "#/$defs/rule_path_list"}
       }
     }
   }

@@ -48,12 +48,7 @@
     },
     "evidence": {
       "type": "object",
-      "additionalProperties": {
-        "oneOf": [
-          {"type": "boolean"},
-          {"$ref": "#/$defs/lifecycle_evidence"}
-        ]
-      }
+      "additionalProperties": {"$ref": "#/$defs/lifecycle_evidence"}
     },
     "resources": {
       "type": "object",

@@ -178,6 +178,19 @@
       "items": {"type": "string", "pattern": "^[a-z][a-z0-9_]*$"},
       "uniqueItems": true
     },
+    "state": {
+      "type": "string",
+      "enum": [
+        "UNCLASSIFIED", "CLASSIFIED", "SPECIFIED", "CLARIFIED", "PLANNED", "TASKED", "ANALYZED", "IMPLEMENTING", "VALIDATING", "REVIEWING", "CONVERGING", "RELEASE_READY", "DEPLOYING", "VERIFYING", "COMPLETE",
+        "BLOCKED_REQUIREMENT", "BLOCKED_POLICY", "BLOCKED_TECHNICAL", "HUMAN_DECISION_REQUIRED", "ROLLBACK_REQUIRED", "INCIDENT"
+      ]
+    },
+    "state_list": {
+      "type": "array",
+      "minItems": 1,
+      "items": {"$ref": "#/$defs/state"},
+      "uniqueItems": true
+    },
     "lifecycle": {
       "type": "object",
       "additionalProperties": false,
@@ -228,21 +241,6 @@
             "ROLLBACK_REQUIRED": {"type": "string", "minLength": 1},
             "INCIDENT": {"type": "string", "minLength": 1}
           }
-        }
-      },
-      "$defs": {
-        "state": {
-          "type": "string",
-          "enum": [
-            "UNCLASSIFIED", "CLASSIFIED", "SPECIFIED", "CLARIFIED", "PLANNED", "TASKED", "ANALYZED", "IMPLEMENTING", "VALIDATING", "REVIEWING", "CONVERGING", "RELEASE_READY", "DEPLOYING", "VERIFYING", "COMPLETE",
-            "BLOCKED_REQUIREMENT", "BLOCKED_POLICY", "BLOCKED_TECHNICAL", "HUMAN_DECISION_REQUIRED", "ROLLBACK_REQUIRED", "INCIDENT"
-          ]
-        },
-        "state_list": {
-          "type": "array",
-          "minItems": 1,
-          "items": {"$ref": "#/$defs/state"},
-          "uniqueItems": true
         }
       }
     }
