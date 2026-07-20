@@ -92,7 +92,9 @@ class PolicyValidationTest(unittest.TestCase):
 
     def test_existing_markdown_namespace_requires_referenced_files(self):
         with temporary_repository() as root:
-            (root / ".claude/rules").mkdir()
+            rules_directory = root / ".claude/rules"
+            for path in rules_directory.iterdir():
+                path.unlink()
 
             errors = self.engine.validate_bundle(root, None)
 
@@ -103,12 +105,18 @@ class PolicyValidationTest(unittest.TestCase):
 
     def test_bootstrapping_allows_not_yet_created_markdown_namespaces(self):
         with temporary_repository() as root:
+            rules_directory = root / ".claude/rules"
+            for path in rules_directory.iterdir():
+                path.unlink()
+            rules_directory.rmdir()
+
             errors = self.engine.validate_bundle(root, None)
 
         self.assertEqual(errors, [])
 
     def test_complete_module_state_requires_all_markdown_references(self):
         with temporary_repository() as root:
+            (root / ".claude/rules/engineering.md").unlink()
             project_path = root / ".claude/project.yaml"
             project = yaml.safe_load(project_path.read_text())
             project.setdefault("instruction_system", {})["module_state"] = "complete"
