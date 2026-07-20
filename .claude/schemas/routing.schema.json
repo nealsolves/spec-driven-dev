@@ -1,0 +1,99 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/schemas/routing.schema.json",
+  "title": "Routing control plane",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "always", "facts", "workflow_rules", "classification_rules", "routes"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "always": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["rules"],
+      "properties": {
+        "rules": {"$ref": "#/$defs/path_list"}
+      }
+    },
+    "facts": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": false,
+      "patternProperties": {
+        "^[a-z][a-z0-9_]*$": {"$ref": "#/$defs/fact_record"}
+      }
+    },
+    "workflow_rules": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": false,
+      "patternProperties": {
+        "^[a-z][a-z0-9_]*$": {
+          "type": "string",
+          "pattern": "^workflows/[a-z0-9-]+\\.md$"
+        }
+      }
+    },
+    "classification_rules": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/rule"}
+    },
+    "routes": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": false,
+      "patternProperties": {
+        "^[a-z][a-z0-9_]*$": {"$ref": "#/$defs/route"}
+      }
+    }
+  },
+  "$defs": {
+    "path_list": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "^(rules|workflows)/[a-z0-9-]+\\.md$"
+      },
+      "uniqueItems": true
+    },
+    "fact_record": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "material"],
+      "properties": {
+        "type": {"const": "boolean"},
+        "material": {"type": "boolean"},
+        "corroborate_when_false": {"type": "boolean"}
+      }
+    },
+    "rule": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["fact", "equals", "add"],
+      "properties": {
+        "fact": {"type": "string", "pattern": "^[a-z][a-z0-9_]*$"},
+        "equals": {
+          "oneOf": [
+            {"type": "boolean"},
+            {"const": "unknown"}
+          ]
+        },
+        "add": {
+          "type": "array",
+          "minItems": 1,
+          "items": {"type": "string", "pattern": "^[a-z][a-z0-9_]*$"},
+          "uniqueItems": true
+        }
+      }
+    },
+    "route": {
+      "type": "object",
+      "additionalProperties": false,
+      "minProperties": 1,
+      "properties": {
+        "workflows": {"$ref": "#/$defs/path_list"},
+        "rules": {"$ref": "#/$defs/path_list"}
+      }
+    }
+  }
+}
