@@ -8,7 +8,8 @@ facts:
   modifies_authorization: {type: boolean, material: true, corroborate_when_false: true}
   reads_customer_data: {type: boolean, material: true}
   writes_customer_data: {type: boolean, material: true}
-  introduces_sensitive_data_class: {type: boolean, material: true}
+  # New purpose, processor, sharing path, AI use, or sensitive classification.
+  introduces_sensitive_data_use: {type: boolean, material: true}
   changes_public_contract: {type: boolean, material: true}
   changes_database_schema: {type: boolean, material: true}
   irreversible_migration: {type: boolean, material: true, corroborate_when_false: true}
@@ -38,7 +39,7 @@ classification_rules:
   - {fact: modifies_authorization, equals: true, add: [security_sensitive]}
   - {fact: reads_customer_data, equals: true, add: [data_sensitive]}
   - {fact: writes_customer_data, equals: true, add: [data_sensitive]}
-  - {fact: introduces_sensitive_data_class, equals: true, add: [data_sensitive, regulated_scope]}
+  - {fact: introduces_sensitive_data_use, equals: true, add: [data_sensitive, regulated_scope]}
   - {fact: changes_public_contract, equals: true, add: [public_contract_change]}
   - {fact: changes_database_schema, equals: true, add: [data_sensitive, production_impact]}
   - {fact: changes_infrastructure, equals: true, add: [architecture_change, production_impact]}

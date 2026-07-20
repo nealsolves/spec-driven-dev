@@ -10,7 +10,7 @@ risk:
     writes_customer_data: high
     modifies_authentication: high
     modifies_authorization: high
-    introduces_sensitive_data_class: high
+    introduces_sensitive_data_use: high
     changes_public_contract: high
     changes_infrastructure: high
     irreversible_migration: critical
@@ -27,7 +27,7 @@ authority:
   outcomes: [autonomous, autonomous_with_enhanced_gates, human_required, prohibited]
   source_precedence: [external_obligation, constitution, regulated_overlay, project, base_profile, workflow]
   fact_outcomes:
-    introduces_sensitive_data_class: human_required
+    introduces_sensitive_data_use: human_required
   actions:
     local_implementation: {low: autonomous, moderate: autonomous, high: autonomous_with_enhanced_gates, critical: human_required}
     push_branch: {low: autonomous, moderate: autonomous, high: autonomous_with_enhanced_gates, critical: human_required}

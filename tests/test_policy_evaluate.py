@@ -117,11 +117,18 @@ class PolicyEvaluationTest(unittest.TestCase):
         self.assertIn("rules/compliance.md", result["modules"])
         self.assertIn("rules/ownership.md", result["modules"])
 
-    def test_new_sensitive_data_class_routes_and_requires_human_authority(self):
+    def test_new_use_of_existing_sensitive_class_requires_human_authority(self):
         context = load_context("maintenance-low.yaml")
+        context["change_id"] = "feature-existing-customer-data-new-processor"
+        evidence_path = ROOT / "tests/fixtures/evidence/sensitive-data-use.json"
+        use_evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
+        self.assertEqual(use_evidence["existing_data_class"], "customer_identifier")
+        self.assertEqual(
+            use_evidence["new_use"]["processor"], "new_external_processor"
+        )
         context["facts"] = {
-            "introduces_sensitive_data_class": fact(
-                True, "tests/fixtures/evidence/schema-diff.json"
+            "introduces_sensitive_data_use": fact(
+                True, str(evidence_path.relative_to(ROOT))
             )
         }
 
@@ -140,7 +147,7 @@ class PolicyEvaluationTest(unittest.TestCase):
             {
                 "source": "constitution",
                 "outcome": "human_required",
-                "rule": "fact_outcome:introduces_sensitive_data_class",
+                "rule": "fact_outcome:introduces_sensitive_data_use",
             },
             result["authority"]["applicable"],
         )
