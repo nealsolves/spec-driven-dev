@@ -719,9 +719,9 @@ class PolicyEvaluationTest(unittest.TestCase):
         self.assertNotIn("Traceback", error_result.stdout + error_result.stderr)
         self.assertEqual(error_result.stdout.count("\n"), 1)
 
-    def test_public_cli_surface_is_validate_and_evaluate_only(self):
+    def test_public_cli_surface_rejects_undeclared_commands(self):
         result = subprocess.run(
-            [sys.executable, str(ENGINE_PATH), "transition", "--root", str(ROOT)],
+            [sys.executable, str(ENGINE_PATH), "reconcile", "--root", str(ROOT)],
             check=False,
             capture_output=True,
             text=True,

@@ -398,7 +398,7 @@ class PolicyValidationTest(unittest.TestCase):
         )
         self.assertNotIn("Traceback", result.stdout + result.stderr)
 
-    def test_transition_is_not_yet_a_public_command(self):
+    def test_transition_public_command_requires_complete_inputs(self):
         result = subprocess.run(
             [sys.executable, str(ENGINE_PATH), "transition", "--root", str(ROOT)],
             check=False,
@@ -409,7 +409,7 @@ class PolicyValidationTest(unittest.TestCase):
         payload = json.loads(result.stdout)
         self.assertEqual(result.returncode, 1)
         self.assertFalse(payload["valid"])
-        self.assertIn("ERROR: argument command", payload["errors"][0])
+        self.assertIn("--context, --decision, --to", payload["errors"][0])
         self.assertNotIn("Traceback", result.stdout + result.stderr)
 
 

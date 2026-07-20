@@ -325,7 +325,12 @@
         "decided_by": {"type": "string", "minLength": 1},
         "authority_basis": {"type": "string", "minLength": 1},
         "timestamp": {"type": "string", "format": "date-time"},
-        "hashes": {"$ref": "#/$defs/hashes"}
+        "hashes": {"$ref": "#/$defs/hashes"},
+        "conditions": {
+          "type": "array",
+          "items": {"type": "string", "minLength": 1},
+          "uniqueItems": true
+        }
       }
     }
   }

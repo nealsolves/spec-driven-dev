@@ -1,0 +1,74 @@
+schema_version: 1
+change_id: retention-001
+workflow_family: feature
+action: local_implementation
+current_state: HUMAN_DECISION_REQUIRED
+change_hash: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+facts:
+  documentation_only:
+    value: true
+    source_type: diff_analysis
+    source_ref: tests/fixtures/evidence/docs-diff.json
+    extractor: repository-fact-extractor-v1
+    confidence: 1.0
+    observed_at_change: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+    corroboration: []
+clarifications:
+  - id: RETENTION
+    class: material_business
+    question: How long should customer documents be retained?
+    options:
+      - id: option_1
+        label: 30 days
+        consequence: Lowest privacy exposure with more user inconvenience.
+        outcome: autonomous
+        conditions: [retention_period_days=30]
+      - id: option_2
+        label: 90 days
+        consequence: Balanced privacy, convenience, and storage cost.
+        outcome: autonomous
+        conditions: [retention_period_days=90]
+      - id: option_3
+        label: Indefinite
+        consequence: Highest convenience and unresolved privacy exposure.
+        outcome: prohibited
+        conditions: [retention_period_days=indefinite]
+    recommended_option: option_2
+exceptions: []
+authority_constraints: []
+evidence: {}
+resources:
+  repair_attempts: 0
+  ci_reruns: 0
+open_escalation:
+  decision_id: DEC-retention-001-RETENTION
+  decision:
+    clarification_id: RETENTION
+    question: How long should customer documents be retained?
+  policy_trigger: clarifications.material_business
+  reason: Pending bounded human authority decision.
+  evidence_collected: [tests/fixtures/evidence/docs-diff.json]
+  options:
+    - id: option_1
+      label: 30 days
+      consequence: Lowest privacy exposure with more user inconvenience.
+      outcome: autonomous
+      conditions: [retention_period_days=30]
+    - id: option_2
+      label: 90 days
+      consequence: Balanced privacy, convenience, and storage cost.
+      outcome: autonomous
+      conditions: [retention_period_days=90]
+    - id: option_3
+      label: Indefinite
+      consequence: Highest convenience and unresolved privacy exposure.
+      outcome: prohibited
+      conditions: [retention_period_days=indefinite]
+  recommended_option: option_2
+  required_response: [decision_id, selected_option, decided_by, authority_basis, timestamp, hashes]
+  hashes:
+    policy_hash: '0000000000000000000000000000000000000000000000000000000000000000'
+    context_hash: '0000000000000000000000000000000000000000000000000000000000000000'
+    change_hash: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+  status: open
+responses: []

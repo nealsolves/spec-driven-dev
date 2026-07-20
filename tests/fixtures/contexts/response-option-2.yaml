@@ -1,0 +1,9 @@
+decision_id: DEC-retention-001-RETENTION
+selected_option: option_2
+decided_by: owner@example.com
+authority_basis: repository_owner
+timestamp: "2026-07-20T12:00:00Z"
+hashes:
+  policy_hash: '0000000000000000000000000000000000000000000000000000000000000000'
+  context_hash: '0000000000000000000000000000000000000000000000000000000000000000'
+  change_hash: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa

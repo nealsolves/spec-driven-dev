@@ -162,6 +162,20 @@ def _load_schema(path: Path, label: str) -> dict[str, Any]:
     return value
 
 
+def _load_json(path: Path, label: str) -> dict[str, Any]:
+    try:
+        value = json.loads(
+            _read_text(path, label), object_pairs_hook=_json_object_pairs
+        )
+    except json.JSONDecodeError as exc:
+        raise PolicyInputError(
+            f"{label}: invalid JSON at line {exc.lineno}, column {exc.colno}: {exc.msg}"
+        ) from exc
+    if not isinstance(value, dict):
+        raise PolicyInputError(f"{label}: JSON document must be an object")
+    return value
+
+
 def load_control_plane(root: Path) -> dict[str, Any]:
     """Load the four controls and four schemas rooted at ``root``."""
 
@@ -1081,13 +1095,27 @@ def _evaluate_clarifications(
             packet = _material_escalation_packet(
                 context, clarification, index, hashes
             )
-            escalations.append(packet)
-            record.update(
-                {
-                    "status": "human_decision_required",
-                    "decision_id": packet["decision_id"],
-                }
-            )
+            if "resolution" in clarification:
+                option_ids = [option["id"] for option in packet["options"]]
+                if clarification["resolution"] not in option_ids:
+                    raise PolicyInputError(
+                        f"clarification {clarification_id}: resolution does not name "
+                        "a supplied option"
+                    )
+                record.update(
+                    {
+                        "status": "resolved",
+                        "resolution": clarification["resolution"],
+                    }
+                )
+            else:
+                escalations.append(packet)
+                record.update(
+                    {
+                        "status": "human_decision_required",
+                        "decision_id": packet["decision_id"],
+                    }
+                )
         results.append(record)
     return results, escalations
 
@@ -1303,6 +1331,233 @@ def evaluate(
         raise PolicyInputError(f"invalid evaluation input: {exc}") from exc
 
 
+def _require_fresh_hashes(
+    label: str, supplied: Any, current: dict[str, str]
+) -> None:
+    if not isinstance(supplied, dict):
+        raise PolicyInputError(f"{label}: hashes must be an object")
+    for key in ("policy_hash", "context_hash", "change_hash"):
+        if supplied.get(key) != current[key]:
+            raise PolicyInputError(f"{label}.{key}: stale decision hash")
+
+
+def _lifecycle_path_name(context: dict[str, Any]) -> str:
+    facts = context.get("facts", {})
+    deploys = facts.get("deploys_to_production", {})
+    if context["action"] == "deploy_production" or deploys.get("value") is True:
+        return "deployment"
+    if context["action"] == "create_release" or context["workflow_family"] == "release":
+        return "release"
+    if context["workflow_family"] == "maintenance":
+        return "maintenance"
+    return "code"
+
+
+def transition(
+    bundle: dict[str, Any],
+    context: dict[str, Any],
+    decision: dict[str, Any],
+    target_state: str,
+) -> dict[str, Any]:
+    """Authorize one declared lifecycle edge using current evidence and hashes."""
+
+    try:
+        current = evaluate(bundle, context)
+        _require_fresh_hashes("decision.hashes", decision.get("hashes"), current["hashes"])
+        if current["authority"]["outcome"] == "prohibited":
+            raise PolicyInputError("current action is prohibited")
+
+        source_state = context["current_state"]
+        path_name = _lifecycle_path_name(context)
+        path = bundle["lifecycle"]["paths"][path_name]
+        active_edges = set(zip(path, path[1:]))
+        if (source_state, target_state) not in active_edges:
+            raise PolicyInputError(
+                f"transition {source_state} -> {target_state} is not on the active "
+                f"{path_name} path"
+            )
+
+        matches = [
+            item
+            for item in bundle["lifecycle"]["transitions"]
+            if item["from"] == source_state and item["to"] == target_state
+        ]
+        if len(matches) != 1:
+            raise PolicyInputError(
+                f"transition {source_state} -> {target_state} must match exactly "
+                f"one declaration; found {len(matches)}"
+            )
+
+        required = matches[0]["requires"]
+        for evidence_name in required:
+            evidence = context["evidence"].get(evidence_name)
+            if evidence is None:
+                raise PolicyInputError(
+                    f"transition evidence {evidence_name}: required evidence is missing"
+                )
+            if evidence.get("satisfied") is not True:
+                raise PolicyInputError(
+                    f"transition evidence {evidence_name}: evidence is not satisfied"
+                )
+            _resolve_evidence_reference(
+                Path(bundle["root"]),
+                evidence["source_ref"],
+                f"transition evidence {evidence_name}",
+            )
+            _require_fresh_hashes(
+                f"transition evidence {evidence_name}.hashes",
+                evidence.get("hashes"),
+                current["hashes"],
+            )
+
+        updated_context = copy.deepcopy(context)
+        updated_context["current_state"] = target_state
+        result = evaluate(bundle, updated_context)
+        result.update(
+            {
+                "previous_state": source_state,
+                "current_state": target_state,
+                "context": updated_context,
+                "transition": {
+                    "from": source_state,
+                    "to": target_state,
+                    "workflow_path": path_name,
+                    "required_evidence": copy.deepcopy(required),
+                    "authorized_by_hashes": copy.deepcopy(current["hashes"]),
+                },
+            }
+        )
+        return result
+    except PolicyInputError:
+        raise
+    except (KeyError, TypeError, ValueError) as exc:
+        raise PolicyInputError(f"invalid transition input: {exc}") from exc
+
+
+def _response_schema_errors(
+    bundle: dict[str, Any], response: dict[str, Any]
+) -> list[str]:
+    schema = bundle["schemas"]["context"]
+    validator = jsonschema.Draft202012Validator(
+        schema, format_checker=jsonschema.FormatChecker()
+    ).evolve(schema={"$ref": "#/$defs/response"})
+    try:
+        errors = sorted(
+            validator.iter_errors(response),
+            key=lambda item: tuple(str(part) for part in item.path),
+        )
+    except Unresolvable as exc:
+        return [_error(f"response: unresolved schema reference: {_unresolved_reference(exc)}")]
+    return [
+        _error(
+            f"response.{_json_path(error.path)}: {error.message}"
+            if error.path
+            else f"response: {error.message}"
+        )
+        for error in errors
+    ]
+
+
+def respond(
+    bundle: dict[str, Any],
+    context: dict[str, Any],
+    response: dict[str, Any],
+) -> dict[str, Any]:
+    """Apply one bounded human response to a copy and reevaluate it."""
+
+    try:
+        _raise_evaluation_errors(_evaluation_configuration_errors(bundle))
+        _raise_evaluation_errors(_context_value_errors(bundle, context))
+        _raise_evaluation_errors(_response_schema_errors(bundle, response))
+        current = evaluate(bundle, context)
+
+        packet = context.get("open_escalation")
+        if not isinstance(packet, dict) or packet.get("status") != "open":
+            raise PolicyInputError("open_escalation: exactly one open packet is required")
+        if response["decision_id"] != packet.get("decision_id"):
+            raise PolicyInputError("response.decision_id: does not match the open packet")
+        _require_fresh_hashes("open_escalation.hashes", packet.get("hashes"), current["hashes"])
+        _require_fresh_hashes("response.hashes", response.get("hashes"), current["hashes"])
+
+        matching_packets = [
+            item
+            for item in current["escalations"]
+            if item["decision_id"] == response["decision_id"]
+        ]
+        if len(matching_packets) != 1 or packet != matching_packets[0]:
+            raise PolicyInputError(
+                "open_escalation: packet does not match exactly one current decision"
+            )
+        if current["authority"]["outcome"] == "prohibited":
+            raise PolicyInputError("current action is prohibited")
+
+        options = [
+            option
+            for option in packet["options"]
+            if option["id"] == response["selected_option"]
+        ]
+        if len(options) != 1:
+            raise PolicyInputError(
+                "response.selected_option: does not match exactly one packet option"
+            )
+        option = options[0]
+        if option.get("outcome") == "prohibited":
+            raise PolicyInputError("response.selected_option: prohibited outcome")
+        selected_conditions = copy.deepcopy(option.get("conditions", []))
+        if "conditions" in response and response["conditions"] != selected_conditions:
+            raise PolicyInputError(
+                "response.conditions: must match the selected option conditions"
+            )
+
+        updated_context = copy.deepcopy(context)
+        clarification_id = packet["decision"].get("clarification_id")
+        clarifications = [
+            item
+            for item in updated_context["clarifications"]
+            if item.get("id") == clarification_id
+        ]
+        if len(clarifications) != 1:
+            raise PolicyInputError(
+                "open_escalation.decision: clarification must match exactly one context item"
+            )
+        clarifications[0]["resolution"] = option["id"]
+
+        recorded_response = copy.deepcopy(response)
+        recorded_response["conditions"] = selected_conditions
+        updated_context["responses"].append(recorded_response)
+        resolved_packet = copy.deepcopy(packet)
+        resolved_packet["status"] = "resolved"
+        updated_context["open_escalation"] = resolved_packet
+
+        outcome = option.get("outcome")
+        if outcome is not None:
+            reason = f"Human response selected {option['id']} for {packet['decision_id']}."
+            if selected_conditions:
+                reason += " Conditions: " + ", ".join(selected_conditions)
+            updated_context["authority_constraints"].append(
+                {
+                    "source": "constitution",
+                    "action": updated_context["action"],
+                    "outcome": outcome,
+                    "rule": f"human_response:{packet['decision_id']}:{option['id']}",
+                    "reason": reason,
+                }
+            )
+
+        reevaluated = evaluate(bundle, updated_context)
+        return {
+            "valid": True,
+            "response": recorded_response,
+            "resolved_escalation": resolved_packet,
+            "context": updated_context,
+            "decision": reevaluated,
+        }
+    except PolicyInputError:
+        raise
+    except (KeyError, TypeError, ValueError) as exc:
+        raise PolicyInputError(f"invalid response input: {exc}") from exc
+
+
 def _build_parser() -> JsonArgumentParser:
     parser = JsonArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
@@ -1315,6 +1570,21 @@ def _build_parser() -> JsonArgumentParser:
     evaluate_parser.add_argument("--root", required=True, type=Path)
     evaluate_parser.add_argument("--context", required=True, type=Path)
     evaluate_parser.add_argument("--output", type=Path)
+    transition_parser = commands.add_parser(
+        "transition", help="authorize one lifecycle transition"
+    )
+    transition_parser.add_argument("--root", required=True, type=Path)
+    transition_parser.add_argument("--context", required=True, type=Path)
+    transition_parser.add_argument("--decision", required=True, type=Path)
+    transition_parser.add_argument("--to", required=True)
+    transition_parser.add_argument("--output", type=Path)
+    respond_parser = commands.add_parser(
+        "respond", help="apply a bounded human decision response"
+    )
+    respond_parser.add_argument("--root", required=True, type=Path)
+    respond_parser.add_argument("--context", required=True, type=Path)
+    respond_parser.add_argument("--response", required=True, type=Path)
+    respond_parser.add_argument("--output", type=Path)
     return parser
 
 
@@ -1343,7 +1613,14 @@ def main(argv: list[str] | None = None) -> int:
         bundle = load_control_plane(arguments.root)
         context_path = _resolve_context_path(bundle["root"], arguments.context)
         context = _load_yaml(context_path, "context")
-        payload = evaluate(bundle, context)
+        if arguments.command == "evaluate":
+            payload = evaluate(bundle, context)
+        elif arguments.command == "transition":
+            decision = _load_json(arguments.decision, "decision")
+            payload = transition(bundle, context, decision, arguments.to)
+        else:
+            response = _load_yaml(arguments.response, "response")
+            payload = respond(bundle, context, response)
         if arguments.output is None:
             _emit(payload)
         else:
