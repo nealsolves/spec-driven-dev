@@ -202,6 +202,17 @@ class ControlPlaneContractsTest(unittest.TestCase):
                 with self.assertRaises(jsonschema.ValidationError):
                     validator.validate(changed)
 
+    def test_update_pull_request_is_declared_with_standard_remote_action_tiers(self):
+        context_schema = load_schema("context")
+        action_values = context_schema["properties"]["action"]["enum"]
+        policy = load_control_file("policy")
+
+        self.assertIn("update_pull_request", action_values)
+        self.assertEqual(
+            policy["authority"]["actions"]["update_pull_request"],
+            policy["authority"]["actions"]["open_pull_request"],
+        )
+
     def test_profile_paths_reject_unknown_keys_and_nonprofile_paths(self):
         schema = load_schema("routing")
         validator = jsonschema.Draft202012Validator(schema)

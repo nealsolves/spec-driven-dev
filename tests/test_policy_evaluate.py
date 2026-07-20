@@ -394,6 +394,53 @@ class PolicyEvaluationTest(unittest.TestCase):
             result["authority"]["applicable"],
         )
 
+    def test_update_pull_request_uses_project_remote_authority(self):
+        context = load_context("maintenance-low.yaml")
+        context["action"] = "update_pull_request"
+
+        disabled_result = self.engine.evaluate(self.bundle, context)
+
+        self.assertEqual(disabled_result["authority"]["outcome"], "prohibited")
+        self.assertTrue(
+            any(
+                item["rule"] == "remote_actions_disabled"
+                for item in disabled_result["authority"]["applicable"]
+            )
+        )
+
+        bundle = copy.deepcopy(self.bundle)
+        project = bundle["project"]
+        project["project"].update(
+            {"name": "delivery-template", "repository": "owner/repository", "lifecycle": "configured"}
+        )
+        project["delivery"].update(
+            {"owner": "owner@example.com", "escalation_owner": "owner@example.com"}
+        )
+        project["data"].update(
+            {"classifications": ["internal"], "regulated_data": "none"}
+        )
+        project["commands"] = {
+            name: "not_applicable" for name in project["commands"]
+        }
+        project["spec_kit"].update(
+            {
+                "enabled": False,
+                "tested_version": "not_applicable",
+                "minimum_version": "not_applicable",
+            }
+        )
+        project["remote_actions"].update(
+            {
+                "enabled": True,
+                "repository": "owner/repository",
+                "update_pull_request": True,
+            }
+        )
+
+        enabled_result = self.engine.evaluate(bundle, context)
+
+        self.assertEqual(enabled_result["authority"]["outcome"], "autonomous")
+
     def test_unconfigured_lifecycle_prohibits_enabled_remote_and_production_actions(self):
         remote_bundle = copy.deepcopy(self.bundle)
         remote_bundle["project"]["remote_actions"].update(
@@ -402,15 +449,35 @@ class PolicyEvaluationTest(unittest.TestCase):
         push_context = load_context("maintenance-low.yaml")
         push_context["action"] = "push_branch"
 
-        push_result = self.engine.evaluate(remote_bundle, push_context)
+        with self.assertRaisesRegex(
+            self.engine.PolicyInputError,
+            "remote_actions.*unconfigured",
+        ):
+            self.engine.evaluate(remote_bundle, push_context)
 
-        self.assertEqual(push_result["authority"]["outcome"], "prohibited")
-        self.assertTrue(
-            any(
-                item["rule"] == "unconfigured_remote_actions_disabled"
-                for item in push_result["authority"]["applicable"]
-            )
+    def test_local_evaluation_rejects_any_unsafe_unconfigured_project_authority(self):
+        cases = (
+            (
+                "remote_actions",
+                {"push_branch": True},
+            ),
+            (
+                "production_actions",
+                {"enabled": True, "deploy": True, "rollback": True},
+            ),
         )
+        for section, mutation in cases:
+            with self.subTest(section=section):
+                bundle = copy.deepcopy(self.bundle)
+                bundle["project"][section].update(mutation)
+                context = load_context("maintenance-low.yaml")
+                context["action"] = "local_implementation"
+
+                with self.assertRaisesRegex(
+                    self.engine.PolicyInputError,
+                    f"{section}.*unconfigured",
+                ):
+                    self.engine.evaluate(bundle, context)
 
     def test_configured_unresolved_remote_or_production_authority_cannot_evaluate(self):
         cases = ("remote", "production")
@@ -452,15 +519,11 @@ class PolicyEvaluationTest(unittest.TestCase):
         deploy_context = load_context("maintenance-low.yaml")
         deploy_context["action"] = "deploy_production"
 
-        deploy_result = self.engine.evaluate(production_bundle, deploy_context)
-
-        self.assertEqual(deploy_result["authority"]["outcome"], "prohibited")
-        self.assertTrue(
-            any(
-                item["rule"] == "unconfigured_production_actions_disabled"
-                for item in deploy_result["authority"]["applicable"]
-            )
-        )
+        with self.assertRaisesRegex(
+            self.engine.PolicyInputError,
+            "production_actions.*unconfigured",
+        ):
+            self.engine.evaluate(production_bundle, deploy_context)
 
     def test_configured_unresolved_commands_and_spec_kit_fail_before_publication_authority(self):
         for action in ("push_branch", "create_release", "deploy_production"):

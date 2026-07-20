@@ -29,7 +29,7 @@
     },
     "action": {
       "type": "string",
-      "enum": ["local_implementation", "push_branch", "open_pull_request", "merge_pull_request", "create_release", "deploy_production", "risk_exception", "instruction_system_change"]
+      "enum": ["local_implementation", "push_branch", "open_pull_request", "update_pull_request", "merge_pull_request", "create_release", "deploy_production", "risk_exception", "instruction_system_change"]
     },
     "current_state": {"$ref": "#/$defs/lifecycle_state"},
     "change_hash": {"$ref": "#/$defs/hash"},

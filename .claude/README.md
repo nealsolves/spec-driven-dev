@@ -90,7 +90,9 @@ The CLI has exactly four operations:
 
 PyYAML and `jsonschema` versions are bounded in
 [`../requirements-policy.txt`](../requirements-policy.txt). A missing dependency
-is a technical block, not permission to improvise policy behavior.
+is a technical block, not permission to improvise policy behavior. Direct CLI
+dependency or runtime resource failures emit a single JSON
+`BLOCKED_TECHNICAL` record and exit status `3`, without a traceback.
 
 ## Project Initialization
 

@@ -14,9 +14,46 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable
 
-import jsonschema
-import yaml
-from referencing.exceptions import Unresolvable
+
+TECHNICAL_BLOCK_EXIT = 3
+
+
+def _emit_technical_block(message: str) -> None:
+    payload = {
+        "valid": False,
+        "state": "BLOCKED_TECHNICAL",
+        "errors": [f"ERROR: BLOCKED_TECHNICAL: {message}"],
+    }
+    sys.stdout.write(json.dumps(payload, sort_keys=True) + "\n")
+
+
+def _bootstrap_dependency_failure(dependency: str) -> None:
+    _emit_technical_block(
+        f"missing policy dependency {dependency}; install requirements-policy.txt"
+    )
+    raise SystemExit(TECHNICAL_BLOCK_EXIT)
+
+
+try:
+    import jsonschema
+except ModuleNotFoundError:
+    if __name__ == "__main__":
+        _bootstrap_dependency_failure("jsonschema")
+    raise
+
+try:
+    import yaml
+except ModuleNotFoundError:
+    if __name__ == "__main__":
+        _bootstrap_dependency_failure("yaml (PyYAML)")
+    raise
+
+try:
+    from referencing.exceptions import Unresolvable
+except ModuleNotFoundError:
+    if __name__ == "__main__":
+        _bootstrap_dependency_failure("jsonschema dependency referencing")
+    raise
 
 
 CONTROL_FILES = {
@@ -1110,7 +1147,7 @@ def _evaluation_configuration_errors(bundle: dict[str, Any]) -> list[str]:
     errors.extend(_routing_reference_errors(bundle))
     errors.extend(_profile_reference_errors(bundle))
     errors.extend(_vocabulary_errors(bundle))
-    errors.extend(_configured_project_errors(bundle))
+    errors.extend(_project_safety_errors(bundle))
     errors.extend(_lifecycle_errors(bundle))
     return errors
 
@@ -1632,6 +1669,7 @@ def _project_authority_outcomes(
     remote_actions = {
         "push_branch",
         "open_pull_request",
+        "update_pull_request",
         "merge_pull_request",
         "create_release",
     }
@@ -2297,6 +2335,9 @@ def main(argv: list[str] | None = None) -> int:
     except PolicyInputError as exc:
         _emit({"valid": False, "errors": [_error(str(exc))]})
         return 1
+    except (RecursionError, MemoryError):
+        _emit_technical_block("runtime resource limit exceeded while processing CLI input")
+        return TECHNICAL_BLOCK_EXIT
 
 
 if __name__ == "__main__":

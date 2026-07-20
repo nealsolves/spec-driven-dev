@@ -32,6 +32,7 @@ authority:
     local_implementation: {low: autonomous, moderate: autonomous, high: autonomous_with_enhanced_gates, critical: human_required}
     push_branch: {low: autonomous, moderate: autonomous, high: autonomous_with_enhanced_gates, critical: human_required}
     open_pull_request: {low: autonomous, moderate: autonomous, high: autonomous_with_enhanced_gates, critical: human_required}
+    update_pull_request: {low: autonomous, moderate: autonomous, high: autonomous_with_enhanced_gates, critical: human_required}
     merge_pull_request: {low: autonomous, moderate: autonomous, high: autonomous_with_enhanced_gates, critical: human_required}
     create_release: {low: autonomous, moderate: autonomous, high: human_required, critical: prohibited}
     deploy_production: {low: autonomous, moderate: autonomous_with_enhanced_gates, high: human_required, critical: prohibited}

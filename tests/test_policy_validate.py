@@ -1,8 +1,10 @@
 import hashlib
 import json
+import os
 import shutil
 import subprocess
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -785,6 +787,99 @@ class PolicyValidationTest(unittest.TestCase):
             "ERROR: project schema: validation resource limit exceeded",
             payload["errors"],
         )
+        self.assertNotIn("Traceback", result.stdout + result.stderr)
+
+    def test_cli_missing_policy_dependencies_emit_one_technical_block_json_object(self):
+        for dependency in ("yaml", "jsonschema"):
+            with self.subTest(dependency=dependency), tempfile.TemporaryDirectory() as directory:
+                site_directory = Path(directory)
+                (site_directory / "sitecustomize.py").write_text(
+                    "import builtins\n"
+                    "import os\n"
+                    "_real_import = builtins.__import__\n"
+                    "_blocked = os.environ['POLICY_BLOCK_IMPORT']\n"
+                    "def _guarded_import(name, *args, **kwargs):\n"
+                    "    if name == _blocked or name.startswith(_blocked + '.'):\n"
+                    "        error = ModuleNotFoundError(f'No module named {_blocked!r}')\n"
+                    "        error.name = _blocked\n"
+                    "        raise error\n"
+                    "    return _real_import(name, *args, **kwargs)\n"
+                    "builtins.__import__ = _guarded_import\n",
+                    encoding="utf-8",
+                )
+                environment = os.environ.copy()
+                environment.update(
+                    {
+                        "POLICY_BLOCK_IMPORT": dependency,
+                        "PYTHONPATH": str(site_directory),
+                    }
+                )
+                result = subprocess.run(
+                    [sys.executable, str(ENGINE_PATH), "validate", "--root", str(ROOT)],
+                    env=environment,
+                    check=False,
+                    capture_output=True,
+                    text=True,
+                )
+
+            payload = json.loads(result.stdout)
+            self.assertEqual(result.returncode, 3)
+            self.assertEqual(result.stderr, "")
+            self.assertEqual(result.stdout.count("\n"), 1)
+            self.assertFalse(payload["valid"])
+            self.assertEqual(payload["state"], "BLOCKED_TECHNICAL")
+            self.assertIn(dependency, payload["errors"][0])
+            self.assertIn("requirements-policy.txt", payload["errors"][0])
+            self.assertNotIn("Traceback", result.stdout + result.stderr)
+
+    def test_decision_cli_resource_error_emits_stable_technical_block(self):
+        with tempfile.TemporaryDirectory() as directory:
+            site_directory = Path(directory) / "controlled-site"
+            site_directory.mkdir()
+            (site_directory / "sitecustomize.py").write_text(
+                "import json\n"
+                "_real_loads = json.loads\n"
+                "def _controlled_loads(value, *args, **kwargs):\n"
+                "    if isinstance(value, str) and 'trigger_resource_limit' in value:\n"
+                "        raise RecursionError('controlled decision recursion')\n"
+                "    return _real_loads(value, *args, **kwargs)\n"
+                "json.loads = _controlled_loads\n",
+                encoding="utf-8",
+            )
+            decision = Path(directory) / "decision.json"
+            decision.write_text(
+                '{"trigger_resource_limit": true}',
+                encoding="utf-8",
+            )
+            environment = os.environ.copy()
+            environment["PYTHONPATH"] = str(site_directory)
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    str(ENGINE_PATH),
+                    "transition",
+                    "--root",
+                    str(ROOT),
+                    "--context",
+                    str(ROOT / "tests/fixtures/contexts/maintenance-low.yaml"),
+                    "--decision",
+                    str(decision),
+                    "--to",
+                    "CLASSIFIED",
+                ],
+                env=environment,
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+
+        payload = json.loads(result.stdout)
+        self.assertEqual(result.returncode, 3, result.stdout + result.stderr)
+        self.assertEqual(result.stderr, "")
+        self.assertEqual(result.stdout.count("\n"), 1)
+        self.assertFalse(payload["valid"])
+        self.assertEqual(payload["state"], "BLOCKED_TECHNICAL")
+        self.assertIn("resource limit", payload["errors"][0])
         self.assertNotIn("Traceback", result.stdout + result.stderr)
 
     def test_transition_public_command_requires_complete_inputs(self):

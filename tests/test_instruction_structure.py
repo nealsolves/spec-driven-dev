@@ -849,6 +849,15 @@ class InstructionStructureTest(unittest.TestCase):
         )
         self.assertIn("a proposed policy cannot approve its own revision", root)
 
+    def test_status_uses_only_tracked_non_self_referential_verification_evidence(self):
+        status = read("implementation_status.md")
+
+        self.assertNotIn(".superpowers/sdd/task-9-report.md", status)
+        self.assertNotIn("branch `HEAD`", status)
+        self.assertNotIn("exact hash is recorded", status)
+        self.assertIn("1d319c3c8c56596fd9f940ee45d9d0e7c060ef21", status)
+        self.assertIn("tracked Git history", status)
+
     def test_operating_guide_documents_current_scope_and_compatibility(self):
         guide = read(".claude/README.md")
         for heading in (
@@ -872,6 +881,8 @@ class InstructionStructureTest(unittest.TestCase):
         self.assertIn("not_applicable", guide)
         self.assertIn("deploy_command", guide)
         self.assertIn("rollback_command", guide)
+        self.assertIn("exit status `3`", guide)
+        self.assertIn("single JSON", guide)
         for old, new in (
             ("instructions.yaml + classification-rules.yaml", "routing.yaml"),
             ("project-profile.yaml", "project.yaml"),
