@@ -277,7 +277,123 @@ class PolicyValidationTest(unittest.TestCase):
         self.assertEqual(result.stderr, "")
         self.assertEqual(result.stdout.count("\n"), 1)
         self.assertIn(
-            "ERROR: project: unresolved schema reference: #/$defs/missing",
+            "ERROR: project schema: unresolved local reference #/$defs/missing "
+            "at #/properties/schema_version/$ref",
+            payload["errors"],
+        )
+        self.assertNotIn("Traceback", result.stdout + result.stderr)
+
+    def test_dormant_context_ref_is_preflighted_without_context(self):
+        with temporary_repository() as root:
+            schema_path = root / ".claude/schemas/context.schema.json"
+            schema = json.loads(schema_path.read_text())
+            schema["$defs"]["dormant"] = {"$ref": "#/$defs/missing"}
+            schema_path.write_text(json.dumps(schema))
+
+            errors = self.engine.validate_bundle(root, None)
+
+        self.assertIn(
+            "ERROR: context schema: unresolved local reference #/$defs/missing "
+            "at #/$defs/dormant/$ref",
+            errors,
+        )
+
+    def test_local_pointer_escaping_is_supported(self):
+        with temporary_repository() as root:
+            schema_path = root / ".claude/schemas/context.schema.json"
+            schema = json.loads(schema_path.read_text())
+            schema["$defs"]["slash/key"] = {"type": "string"}
+            schema["$defs"]["tilde~key"] = {"$ref": "#/$defs/slash~1key"}
+            schema["$defs"]["escaped"] = {"$ref": "#/$defs/tilde~0key"}
+            schema_path.write_text(json.dumps(schema))
+
+            errors = self.engine.validate_bundle(root, None)
+
+        self.assertEqual(errors, [])
+
+    def test_non_local_schema_ref_fails_closed(self):
+        with temporary_repository() as root:
+            schema_path = root / ".claude/schemas/context.schema.json"
+            schema = json.loads(schema_path.read_text())
+            schema["$defs"]["external"] = {
+                "$ref": "https://example.invalid/schema.json"
+            }
+            schema_path.write_text(json.dumps(schema))
+
+            errors = self.engine.validate_bundle(root, None)
+
+        self.assertIn(
+            "ERROR: context schema: unsupported non-local reference "
+            "'https://example.invalid/schema.json' at #/$defs/external/$ref",
+            errors,
+        )
+
+    def test_self_referential_schema_cli_fails_without_traceback(self):
+        with temporary_repository() as root:
+            schema_path = root / ".claude/schemas/project.schema.json"
+            schema = json.loads(schema_path.read_text())
+            schema["properties"]["schema_version"] = {
+                "$ref": "#/properties/schema_version"
+            }
+            schema_path.write_text(json.dumps(schema))
+            result = subprocess.run(
+                [sys.executable, str(ENGINE_PATH), "validate", "--root", str(root)],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+
+        payload = json.loads(result.stdout)
+        self.assertEqual(result.returncode, 1)
+        self.assertFalse(payload["valid"])
+        self.assertEqual(result.stderr, "")
+        self.assertEqual(result.stdout.count("\n"), 1)
+        self.assertIn(
+            "ERROR: project schema: reference cycle detected: "
+            "#/properties/schema_version -> #/properties/schema_version",
+            payload["errors"],
+        )
+        self.assertNotIn("Traceback", result.stdout + result.stderr)
+
+    def test_nested_indirect_reference_cycle_is_rejected(self):
+        with temporary_repository() as root:
+            schema_path = root / ".claude/schemas/project.schema.json"
+            schema = json.loads(schema_path.read_text())
+            schema["$defs"] = {
+                "a": {"$ref": "#/$defs/b"},
+                "b": {"anyOf": [{"$ref": "#/$defs/a"}]},
+            }
+            schema_path.write_text(json.dumps(schema))
+
+            errors = self.engine.validate_bundle(root, None)
+
+        self.assertIn(
+            "ERROR: project schema: reference cycle detected: "
+            "#/$defs/b -> #/$defs/a -> #/$defs/b",
+            errors,
+        )
+
+    def test_excessive_schema_nesting_cli_fails_without_traceback(self):
+        with temporary_repository() as root:
+            schema_path = root / ".claude/schemas/project.schema.json"
+            depth = 1500
+            schema_path.write_text(
+                '{"allOf":[' * depth + '{"type":"object"}' + "]}" * depth
+            )
+            result = subprocess.run(
+                [sys.executable, str(ENGINE_PATH), "validate", "--root", str(root)],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+
+        payload = json.loads(result.stdout)
+        self.assertEqual(result.returncode, 1)
+        self.assertFalse(payload["valid"])
+        self.assertEqual(result.stderr, "")
+        self.assertEqual(result.stdout.count("\n"), 1)
+        self.assertIn(
+            "ERROR: project schema: validation resource limit exceeded",
             payload["errors"],
         )
         self.assertNotIn("Traceback", result.stdout + result.stderr)

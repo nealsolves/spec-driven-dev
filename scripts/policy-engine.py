@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import re
 import sys
 from collections import deque
 from pathlib import Path
@@ -29,6 +30,10 @@ SCHEMA_FILES = {
     "policy": ".claude/schemas/policy.schema.json",
     "context": ".claude/schemas/context.schema.json",
 }
+
+MAX_SCHEMA_NODES = 100_000
+MAX_SCHEMA_DEPTH = 512
+INVALID_POINTER_ESCAPE = re.compile(r"~(?:[^01]|$)")
 
 
 class PolicyInputError(ValueError):
@@ -109,6 +114,10 @@ def _read_text(path: Path, label: str) -> str:
 def _load_yaml(path: Path, label: str) -> dict[str, Any]:
     try:
         value = yaml.load(_read_text(path, label), Loader=UniqueKeyLoader)
+    except RecursionError as exc:
+        raise PolicyInputError(f"{label}: YAML nesting exceeds runtime limit") from exc
+    except MemoryError as exc:
+        raise PolicyInputError(f"{label}: YAML input exceeds memory limit") from exc
     except yaml.YAMLError as exc:
         detail = getattr(exc, "problem", None) or str(exc).splitlines()[0]
         raise PolicyInputError(f"{label}: invalid YAML: {detail}") from exc
@@ -131,6 +140,10 @@ def _load_schema(path: Path, label: str) -> dict[str, Any]:
         value = json.loads(
             _read_text(path, label), object_pairs_hook=_json_object_pairs
         )
+    except RecursionError as exc:
+        raise PolicyInputError(f"{label}: JSON nesting exceeds runtime limit") from exc
+    except MemoryError as exc:
+        raise PolicyInputError(f"{label}: JSON input exceeds memory limit") from exc
     except json.JSONDecodeError as exc:
         raise PolicyInputError(
             f"{label}: invalid JSON at line {exc.lineno}, column {exc.colno}: {exc.msg}"
@@ -167,12 +180,123 @@ def _json_path(parts: Iterable[Any]) -> str:
     return path
 
 
+def _pointer_fragment(path: tuple[Any, ...]) -> str:
+    if not path:
+        return "#"
+    encoded = [str(part).replace("~", "~0").replace("/", "~1") for part in path]
+    return "#/" + "/".join(encoded)
+
+
+def _resolve_schema_ref(
+    name: str, schema: dict[str, Any], reference: Any, location: str
+) -> tuple[tuple[Any, ...], dict[str, Any] | bool]:
+    label = f"{name} schema"
+    if not isinstance(reference, str):
+        raise PolicyInputError(f"{label}: $ref at {location} must be a string")
+    if not reference.startswith("#"):
+        raise PolicyInputError(
+            f"{label}: unsupported non-local reference {reference!r} at {location}"
+        )
+    if reference != "#" and not reference.startswith("#/"):
+        raise PolicyInputError(
+            f"{label}: unsupported local non-pointer reference {reference!r} "
+            f"at {location}"
+        )
+    if reference == "#":
+        return (), schema
+
+    current: Any = schema
+    resolved_path: list[Any] = []
+    for raw_token in reference[2:].split("/"):
+        if INVALID_POINTER_ESCAPE.search(raw_token):
+            raise PolicyInputError(
+                f"{label}: invalid local JSON Pointer {reference!r} at {location}"
+            )
+        token = raw_token.replace("~1", "/").replace("~0", "~")
+        if isinstance(current, dict):
+            if token not in current:
+                break
+            current = current[token]
+            resolved_path.append(token)
+            continue
+        if isinstance(current, list):
+            if not token.isdigit() or (len(token) > 1 and token.startswith("0")):
+                break
+            item_index = int(token)
+            if item_index >= len(current):
+                break
+            current = current[item_index]
+            resolved_path.append(item_index)
+            continue
+        break
+    else:
+        if isinstance(current, (dict, bool)):
+            return tuple(resolved_path), current
+        raise PolicyInputError(
+            f"{label}: local reference {reference} at {location} "
+            "does not target a schema"
+        )
+    raise PolicyInputError(
+        f"{label}: unresolved local reference {reference} at {location}"
+    )
+
+
+def _schema_reference_errors(name: str, schema: dict[str, Any]) -> list[str]:
+    errors: list[str] = []
+    work: list[
+        tuple[tuple[Any, ...], Any, tuple[tuple[Any, ...], ...]]
+    ] = [((), schema, ())]
+    visited_nodes = 0
+    while work:
+        path, value, active_targets = work.pop()
+        visited_nodes += 1
+        if (
+            visited_nodes > MAX_SCHEMA_NODES
+            or len(path) > MAX_SCHEMA_DEPTH
+            or len(active_targets) > MAX_SCHEMA_DEPTH
+        ):
+            return [_error(f"{name} schema: validation resource limit exceeded")]
+
+        if isinstance(value, dict) and "$ref" in value:
+            reference = value["$ref"]
+            location = _pointer_fragment(path + ("$ref",))
+            try:
+                target_path, target = _resolve_schema_ref(
+                    name, schema, reference, location
+                )
+            except PolicyInputError as exc:
+                errors.append(_error(str(exc)))
+            else:
+                if target_path in active_targets:
+                    index = active_targets.index(target_path)
+                    cycle = active_targets[index:] + (target_path,)
+                    rendered = " -> ".join(
+                        _pointer_fragment(item) for item in cycle
+                    )
+                    errors.append(
+                        _error(f"{name} schema: reference cycle detected: {rendered}")
+                    )
+                    return sorted(set(errors))
+                work.append((target_path, target, active_targets + (target_path,)))
+
+        if isinstance(value, dict):
+            for key, child in reversed(list(value.items())):
+                if key != "$ref":
+                    work.append((path + (key,), child, active_targets))
+        elif isinstance(value, list):
+            for index in range(len(value) - 1, -1, -1):
+                work.append((path + (index,), value[index], active_targets))
+    return sorted(set(errors))
+
+
 def _schema_validation_errors(
     name: str, value: dict[str, Any], schema: dict[str, Any]
 ) -> list[str]:
     errors: list[str] = []
     try:
         jsonschema.Draft202012Validator.check_schema(schema)
+    except (RecursionError, MemoryError):
+        return [_error(f"{name} schema: validation resource limit exceeded")]
     except jsonschema.SchemaError as exc:
         return [_error(f"{name} schema: invalid Draft 2020-12 schema: {exc.message}")]
 
@@ -187,6 +311,8 @@ def _schema_validation_errors(
     except Unresolvable as exc:
         reference = _unresolved_reference(exc)
         return [_error(f"{name}: unresolved schema reference: {reference}")]
+    except (RecursionError, MemoryError):
+        return [_error(f"{name} schema: validation resource limit exceeded")]
     for validation_error in validation_errors:
         location = _json_path(validation_error.path)
         label = f"{name}.{location}" if location else name
@@ -197,16 +323,25 @@ def _schema_validation_errors(
 def _control_schema_errors(bundle: dict[str, Any]) -> list[str]:
     errors: list[str] = []
     schemas = bundle["schemas"]
+    reference_errors = {
+        name: _schema_reference_errors(name, schema)
+        for name, schema in schemas.items()
+    }
+    for schema_errors in reference_errors.values():
+        errors.extend(schema_errors)
     for name in ("project", "routing", "policy"):
-        errors.extend(_schema_validation_errors(name, bundle[name], schemas[name]))
+        if not reference_errors[name]:
+            errors.extend(
+                _schema_validation_errors(name, bundle[name], schemas[name])
+            )
 
-    policy_schema = schemas["policy"]
-    try:
-        jsonschema.Draft202012Validator.check_schema(policy_schema)
-        lifecycle_validator = jsonschema.Draft202012Validator(
-            policy_schema, format_checker=jsonschema.FormatChecker()
-        ).evolve(schema={"$ref": "#/$defs/lifecycle"})
+    if not reference_errors["policy"]:
+        policy_schema = schemas["policy"]
         try:
+            jsonschema.Draft202012Validator.check_schema(policy_schema)
+            lifecycle_validator = jsonschema.Draft202012Validator(
+                policy_schema, format_checker=jsonschema.FormatChecker()
+            ).evolve(schema={"$ref": "#/$defs/lifecycle"})
             lifecycle_errors = sorted(
                 lifecycle_validator.iter_errors(bundle["lifecycle"]),
                 key=lambda item: tuple(str(p) for p in item.path),
@@ -217,22 +352,31 @@ def _control_schema_errors(bundle: dict[str, Any]) -> list[str]:
                 _error(f"lifecycle: unresolved schema reference: {reference}")
             )
             lifecycle_errors = []
+        except (RecursionError, MemoryError):
+            errors.append(_error("policy schema: validation resource limit exceeded"))
+            lifecycle_errors = []
+        except jsonschema.SchemaError as exc:
+            errors.append(
+                _error(
+                    f"policy schema: invalid Draft 2020-12 schema: {exc.message}"
+                )
+            )
+            lifecycle_errors = []
         for validation_error in lifecycle_errors:
             location = _json_path(validation_error.path)
             label = f"lifecycle.{location}" if location else "lifecycle"
             errors.append(_error(f"{label}: {validation_error.message}"))
-    except jsonschema.SchemaError as exc:
-        errors.append(
-            _error(f"policy schema: invalid Draft 2020-12 schema: {exc.message}")
-        )
 
     # The context schema is a contract even when no live context is supplied.
-    try:
-        jsonschema.Draft202012Validator.check_schema(schemas["context"])
-    except jsonschema.SchemaError as exc:
-        errors.append(
-            _error(f"context schema: invalid Draft 2020-12 schema: {exc.message}")
-        )
+    if not reference_errors["context"]:
+        try:
+            jsonschema.Draft202012Validator.check_schema(schemas["context"])
+        except (RecursionError, MemoryError):
+            errors.append(_error("context schema: validation resource limit exceeded"))
+        except jsonschema.SchemaError as exc:
+            errors.append(
+                _error(f"context schema: invalid Draft 2020-12 schema: {exc.message}")
+            )
     return errors
 
 
@@ -543,6 +687,8 @@ def validate_bundle(root: Path, context_path: Path | None) -> list[str]:
     except Unresolvable as exc:
         reference = _unresolved_reference(exc)
         return [_error(f"unresolved schema reference: {reference}")]
+    except (RecursionError, MemoryError):
+        return [_error("schema validation resource limit exceeded")]
     except (KeyError, TypeError, ValueError) as exc:
         # Malformed user data should remain a stable validation result, not a traceback.
         return [_error(f"invalid control-plane structure: {exc}")]
