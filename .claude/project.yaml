@@ -1,7 +1,7 @@
 schema_version: 1
 control_plane_version: 1
 instruction_system:
-  module_state: bootstrapping
+  module_state: complete
 project:
   name: <product>
   repository: <owner/repository>

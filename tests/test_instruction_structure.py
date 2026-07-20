@@ -252,12 +252,427 @@ RULE_TOPICS = {
     ),
 }
 
+WORKFLOW_HEADINGS = (
+    "Entry criteria",
+    "Artifacts",
+    "Gates",
+    "Ordered steps",
+    "Evidence",
+    "Exit criteria",
+    "Solo mode",
+    "Stop/escalation conditions",
+)
+
+WORKFLOW_TOPICS = {
+    "project-initialization.md": (
+        "project identity",
+        "repository target",
+        "project lifecycle",
+        "allowed environments",
+        "install, test, lint, typecheck, build, and release commands",
+        "data classifications",
+        "base profile",
+        "regulated overlay",
+        "financial limits",
+        "remote-action permissions",
+        "production permissions",
+        "deployment mechanism",
+        "rollback mechanism",
+        "spec kit compatibility",
+        "escalation owner",
+        "external obligations",
+        "preserve unknown",
+        "autonomous risk exceptions",
+    ),
+    "instruction-system-change.md": (
+        "prior trusted policy",
+        "before and after",
+        "sensitive weakening",
+        "control-plane version increment",
+        "cannot authorize itself",
+        "human_required",
+        "bootstrap",
+    ),
+    "feature-development.md": (
+        "constitution",
+        "specify",
+        "clarify",
+        "plan",
+        "checklist",
+        "tasks",
+        "analyze",
+        "implement",
+        "converge",
+        "material_business",
+        "escalation packet",
+    ),
+    "bug-fix.md": (
+        "simple regression",
+        "behavior clarification",
+        "security defect",
+        "incident follow-up",
+        "regression test",
+        "characterization test",
+        "risk reevaluation",
+    ),
+    "maintenance.md": (
+        "documentation",
+        "formatting",
+        "rename",
+        "non-behavioral refactor",
+        "hygiene",
+        "maintenance id",
+        "reduced lifecycle",
+        "validation",
+        "review",
+    ),
+    "dependency-update.md": (
+        "reason",
+        "version delta",
+        "changelog",
+        "security",
+        "license",
+        "compatibility tests",
+        "lockfile",
+        "rollback",
+        "runtime-critical",
+    ),
+    "brownfield-change.md": (
+        "actual behavior",
+        "characterization tests",
+        "consumer impact",
+        "telemetry",
+        "data evidence",
+        "spec reconciliation",
+        "migration",
+        "deprecation",
+    ),
+    "release.md": (
+        "release readiness",
+        "exact-commit ci",
+        "authority evaluation",
+        "rollback",
+        "monitoring",
+        "verification",
+        "phase 2",
+    ),
+    "incident-hotfix.md": (
+        "stabilize first",
+        "smallest safe change",
+        "reduced gates",
+        "no silent bypass",
+        "incident record",
+        "regression test",
+        "spec updates",
+        "restoration",
+        "root cause",
+    ),
+}
+
+PROFILE_TOPICS = {
+    "solo-developer.md": (
+        "base profile",
+        "one person",
+        "automated gates",
+        "risk-bounded review",
+        "written exceptions",
+        "repeatable deployment",
+        "audit trail",
+        "separate-model challenge",
+        "no default second-human",
+    ),
+    "team.md": (
+        "base profile",
+        "codeowners",
+        "author/approver separation",
+        "path-sensitive",
+        "security",
+        "data",
+        "platform",
+        "release authority",
+        "emergency authority",
+    ),
+    "regulated.md": (
+        "overlay",
+        "external control mapping",
+        "evidence retention",
+        "required approvers",
+        "segregation",
+        "override solo allowances",
+        "exception authority",
+        "auditability",
+        "does not claim certification",
+    ),
+    "prototype.md": (
+        "base profile",
+        "non-production",
+        "no real regulated data",
+        "no production secrets",
+        "no implied readiness",
+        "promotion exit criteria",
+    ),
+}
+
+TEMPLATE_FIELDS = {
+    "feature-instruction-context.md": (
+        "Profile and overlays",
+        "Classifications",
+        "Observable facts",
+        "Risk",
+        "Authority",
+        "Readiness profile",
+        "Data profile",
+        "Control profile",
+        "Policy hash",
+        "Context hash",
+        "Change hash",
+        "Lifecycle state",
+        "Loaded-module checklist",
+        "Not-applicable table",
+        "Evidence table",
+        "Clarifications",
+        "Exceptions",
+        "Escalation status",
+    ),
+    "adr-template.md": (
+        "Title",
+        "Status",
+        "Date",
+        "Context",
+        "Decision",
+        "Alternatives",
+        "Consequences",
+        "Security and privacy",
+        "Operations",
+        "Cost",
+        "Migration and reversal",
+        "References",
+    ),
+    "threat-model-template.md": (
+        "Scope",
+        "Assets",
+        "Actors",
+        "Trust boundaries",
+        "Data flows",
+        "Threats",
+        "Mitigations",
+        "Residual risk",
+        "Verification",
+        "Owner",
+    ),
+    "privacy-assessment-template.md": (
+        "Categories",
+        "Purpose",
+        "Collection",
+        "Storage",
+        "Retention",
+        "Access",
+        "Processors and sharing",
+        "Residency",
+        "Deletion",
+        "Non-production",
+        "Logging",
+        "AI use",
+        "Risks",
+        "Controls",
+    ),
+    "production-readiness-template.md": (
+        "Level",
+        "Environments",
+        "Dependencies",
+        "Configuration",
+        "Migrations",
+        "Deployment",
+        "Rollback",
+        "Health",
+        "Capacity",
+        "Backups",
+        "Recovery",
+        "Runbooks",
+        "Ownership",
+        "Verification",
+        "Residual risk",
+    ),
+    "observability-plan-template.md": (
+        "Journeys",
+        "SLIs",
+        "SLO and rationale",
+        "Logs",
+        "Metrics",
+        "Traces",
+        "Audit events",
+        "Dashboards",
+        "Alerts",
+        "Ownership",
+        "Redaction",
+        "Retention",
+        "Cost and cardinality",
+        "Verification",
+    ),
+    "compliance-mapping-template.md": (
+        "Control profile",
+        "Requirement",
+        "Implementation",
+        "Evidence",
+        "Owner",
+        "Status",
+        "Exception",
+        "Revalidation date",
+    ),
+    "risk-exception-template.md": (
+        "Waived requirement",
+        "Rationale",
+        "Scope",
+        "Tier",
+        "Impact",
+        "Compensation",
+        "Owner",
+        "Policy authority",
+        "Expiration",
+        "Remediation and follow-up",
+        "Issue, PR, and spec links",
+    ),
+    "release-readiness-template.md": (
+        "Version",
+        "Scope",
+        "CI commit",
+        "Artifacts",
+        "SBOM, provenance, and signing",
+        "Compatibility",
+        "Migrations",
+        "Deployment",
+        "Rollback",
+        "Monitoring",
+        "Authority",
+        "Verification",
+    ),
+    "incident-record-template.md": (
+        "Timeline",
+        "Impact",
+        "Detection",
+        "Containment",
+        "Recovery",
+        "Root cause",
+        "Contributors",
+        "Corrective actions",
+        "Regression tests",
+        "Spec changes",
+        "Owner",
+    ),
+    "maintenance-record-template.md": (
+        "Change type and ID",
+        "Scope",
+        "Behavior impact",
+        "Facts",
+        "Risk",
+        "Activated modules",
+        "Validation and review evidence",
+        "Rollback",
+        "Policy hash",
+        "Context hash",
+        "Change hash",
+        "Authority",
+        "PR link",
+    ),
+}
+
 
 def read(path: str) -> str:
     return (ROOT / path).read_text(encoding="utf-8")
 
 
 class InstructionStructureTest(unittest.TestCase):
+    def test_workflow_directory_matches_routing_manifest(self):
+        routing = yaml.safe_load(read(".claude/routing.yaml"))
+        routing_paths = set(routing["workflow_rules"].values())
+        for route in routing["routes"].values():
+            routing_paths.update(route.get("workflows", []))
+        expected_paths = {f"workflows/{name}" for name in WORKFLOW_TOPICS}
+        workflow_root = ROOT / ".claude/workflows"
+        actual_paths = (
+            {f"workflows/{path.name}" for path in workflow_root.glob("*.md")}
+            if workflow_root.is_dir()
+            else set()
+        )
+        self.assertEqual(routing_paths, expected_paths)
+        self.assertEqual(actual_paths, expected_paths)
+
+    def test_workflows_have_required_contracts_and_topics(self):
+        for name, topics in WORKFLOW_TOPICS.items():
+            with self.subTest(workflow=name):
+                content = read(f".claude/workflows/{name}")
+                self.assertEqual(
+                    tuple(re.findall(r"(?m)^## (.+)$", content)),
+                    WORKFLOW_HEADINGS,
+                    f"{name}: structural headings must match the workflow contract",
+                )
+                lowered = re.sub(r"\s+", " ", content.lower())
+                for topic in topics:
+                    self.assertIn(topic.lower(), lowered, f"{name}: missing {topic}")
+
+    def test_project_initialization_names_every_project_field(self):
+        project = yaml.safe_load(read(".claude/project.yaml"))
+
+        def leaf_paths(value, prefix=""):
+            paths = []
+            if isinstance(value, dict):
+                for key, item in value.items():
+                    path = f"{prefix}.{key}" if prefix else key
+                    paths.extend(leaf_paths(item, path))
+            else:
+                paths.append(prefix)
+            return paths
+
+        initialization = read(".claude/workflows/project-initialization.md")
+        for path in leaf_paths(project):
+            self.assertIn(f"`{path}`", initialization, f"missing project field {path}")
+
+    def test_profiles_are_complete_and_distinguish_base_from_overlay(self):
+        profile_root = ROOT / ".claude/profiles"
+        actual = (
+            {path.name for path in profile_root.glob("*.md")}
+            if profile_root.is_dir()
+            else set()
+        )
+        self.assertEqual(actual, set(PROFILE_TOPICS))
+        for name, topics in PROFILE_TOPICS.items():
+            with self.subTest(profile=name):
+                content = re.sub(
+                    r"\s+", " ", read(f".claude/profiles/{name}").lower()
+                )
+                for topic in topics:
+                    self.assertIn(topic.lower(), content, f"{name}: missing {topic}")
+
+    def test_templates_are_fillable_and_have_required_fields(self):
+        template_root = ROOT / ".claude/templates"
+        actual = (
+            {path.name for path in template_root.glob("*.md")}
+            if template_root.is_dir()
+            else set()
+        )
+        self.assertEqual(actual, set(TEMPLATE_FIELDS))
+        for name, fields in TEMPLATE_FIELDS.items():
+            with self.subTest(template=name):
+                content = read(f".claude/templates/{name}")
+                self.assertIn("<", content, f"{name}: template must be fillable")
+                for field in fields:
+                    self.assertRegex(
+                        content,
+                        rf"(?im)^\*\*{re.escape(field)}:\*\*",
+                        f"{name}: missing form field {field}",
+                    )
+                normalized = content.lower().replace(" ", "_")
+                for freshness_hash in ("policy_hash", "context_hash", "change_hash"):
+                    self.assertIn(
+                        freshness_hash,
+                        normalized,
+                        f"{name}: missing {freshness_hash}",
+                    )
+
+    def test_completed_module_installation_is_non_bypassable(self):
+        project = yaml.safe_load(read(".claude/project.yaml"))
+        self.assertEqual(project["instruction_system"]["module_state"], "complete")
+
     def test_rule_directory_matches_routing_manifest(self):
         routing = yaml.safe_load(read(".claude/routing.yaml"))
         routing_paths = set(routing["always"]["rules"])
