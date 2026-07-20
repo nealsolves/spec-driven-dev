@@ -692,11 +692,15 @@ def _vocabulary_errors(bundle: dict[str, Any]) -> list[str]:
     return errors
 
 
+def _is_not_applicable_project_value(value: Any) -> bool:
+    return isinstance(value, str) and value.strip().casefold() == "not_applicable"
+
+
 def _is_unresolved_project_value(value: Any) -> bool:
     if not isinstance(value, str) or not value.strip():
         return True
     normalized = value.strip().casefold()
-    return normalized in {"unknown", "not_applicable"} or (
+    return normalized == "unknown" or _is_not_applicable_project_value(value) or (
         normalized.startswith("<") and normalized.endswith(">")
     )
 
@@ -704,8 +708,7 @@ def _is_unresolved_project_value(value: Any) -> bool:
 def _is_resolved_or_not_applicable(value: Any) -> bool:
     if not isinstance(value, str) or not value.strip():
         return False
-    normalized = value.strip().casefold()
-    return normalized == "not_applicable" or not _is_unresolved_project_value(value)
+    return _is_not_applicable_project_value(value) or not _is_unresolved_project_value(value)
 
 
 def _parent_permission_errors(project: dict[str, Any]) -> list[str]:
@@ -1651,7 +1654,9 @@ def _project_authority_outcomes(
                     "rule": "remote_actions_disabled",
                 }
             )
-        if action == "create_release" and project["commands"]["release"] == "not_applicable":
+        if action == "create_release" and _is_not_applicable_project_value(
+            project["commands"]["release"]
+        ):
             outcomes.append(
                 {
                     "source": "project",

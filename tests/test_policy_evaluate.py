@@ -503,47 +503,50 @@ class PolicyEvaluationTest(unittest.TestCase):
                 ):
                     self.engine.evaluate(bundle, context)
 
-    def test_not_applicable_release_command_cannot_authorize_release(self):
-        bundle = copy.deepcopy(self.bundle)
-        project = bundle["project"]
-        project["project"].update(
-            {"name": "delivery-template", "repository": "owner/repository", "lifecycle": "configured"}
-        )
-        project["delivery"].update(
-            {"owner": "owner@example.com", "escalation_owner": "owner@example.com"}
-        )
-        project["data"].update(
-            {"classifications": ["internal"], "regulated_data": "none"}
-        )
-        project["commands"] = {
-            name: "not_applicable" for name in project["commands"]
-        }
-        project["spec_kit"].update(
-            {
-                "enabled": False,
-                "tested_version": "not_applicable",
-                "minimum_version": "not_applicable",
-            }
-        )
-        project["remote_actions"].update(
-            {
-                "enabled": True,
-                "repository": "owner/repository",
-                "create_release": True,
-            }
-        )
-        context = load_context("maintenance-low.yaml")
-        context["action"] = "create_release"
+    def test_normalized_not_applicable_release_command_cannot_authorize_release(self):
+        for sentinel in ("not_applicable", "NOT_APPLICABLE", "  not_applicable  "):
+            with self.subTest(sentinel=sentinel):
+                bundle = copy.deepcopy(self.bundle)
+                project = bundle["project"]
+                project["project"].update(
+                    {"name": "delivery-template", "repository": "owner/repository", "lifecycle": "configured"}
+                )
+                project["delivery"].update(
+                    {"owner": "owner@example.com", "escalation_owner": "owner@example.com"}
+                )
+                project["data"].update(
+                    {"classifications": ["internal"], "regulated_data": "none"}
+                )
+                project["commands"] = {
+                    name: "not_applicable" for name in project["commands"]
+                }
+                project["commands"]["release"] = sentinel
+                project["spec_kit"].update(
+                    {
+                        "enabled": False,
+                        "tested_version": "not_applicable",
+                        "minimum_version": "not_applicable",
+                    }
+                )
+                project["remote_actions"].update(
+                    {
+                        "enabled": True,
+                        "repository": "owner/repository",
+                        "create_release": True,
+                    }
+                )
+                context = load_context("maintenance-low.yaml")
+                context["action"] = "create_release"
 
-        result = self.engine.evaluate(bundle, context)
+                result = self.engine.evaluate(bundle, context)
 
-        self.assertEqual(result["authority"]["outcome"], "prohibited")
-        self.assertTrue(
-            any(
-                item["rule"] == "release_command_not_applicable"
-                for item in result["authority"]["applicable"]
-            )
-        )
+                self.assertEqual(result["authority"]["outcome"], "prohibited")
+                self.assertTrue(
+                    any(
+                        item["rule"] == "release_command_not_applicable"
+                        for item in result["authority"]["applicable"]
+                    )
+                )
 
     def test_deny_overrides_selects_most_restrictive_outcome(self):
         context = load_context("maintenance-low.yaml")
