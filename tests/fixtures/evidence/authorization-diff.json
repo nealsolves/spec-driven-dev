@@ -1,0 +1,4 @@
+{
+  "paths": ["src/authz.py"],
+  "authorization_changes": true
+}

@@ -1,0 +1,32 @@
+schema_version: 1
+change_id: migration-001
+workflow_family: feature
+action: create_release
+current_state: UNCLASSIFIED
+change_hash: cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
+facts:
+  changes_database_schema:
+    value: true
+    source_type: diff_analysis
+    source_ref: tests/fixtures/evidence/schema-diff.json
+    extractor: repository-fact-extractor-v1
+    confidence: 1.0
+    observed_at_change: cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
+    corroboration: []
+  irreversible_migration:
+    value: true
+    source_type: migration_analysis
+    source_ref: tests/fixtures/evidence/migration-analysis.json
+    extractor: repository-fact-extractor-v1
+    confidence: 0.98
+    observed_at_change: cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
+    corroboration: []
+clarifications: []
+exceptions: []
+authority_constraints: []
+evidence: {}
+resources:
+  repair_attempts: 0
+  ci_reruns: 0
+open_escalation: null
+responses: []

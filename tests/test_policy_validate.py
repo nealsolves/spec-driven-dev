@@ -398,9 +398,9 @@ class PolicyValidationTest(unittest.TestCase):
         )
         self.assertNotIn("Traceback", result.stdout + result.stderr)
 
-    def test_only_validate_is_a_public_command(self):
+    def test_transition_is_not_yet_a_public_command(self):
         result = subprocess.run(
-            [sys.executable, str(ENGINE_PATH), "evaluate", "--root", str(ROOT)],
+            [sys.executable, str(ENGINE_PATH), "transition", "--root", str(ROOT)],
             check=False,
             capture_output=True,
             text=True,
