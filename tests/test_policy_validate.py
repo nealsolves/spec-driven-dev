@@ -1,0 +1,203 @@
+import hashlib
+import json
+import subprocess
+import sys
+import unittest
+from pathlib import Path
+
+import yaml
+
+from tests.helpers import ROOT, load_engine, temporary_repository
+
+
+ENGINE_PATH = ROOT / "scripts/policy-engine.py"
+
+
+class PolicyValidationTest(unittest.TestCase):
+    def setUp(self):
+        self.engine = load_engine()
+
+    def test_canonical_hash_is_independent_of_mapping_order(self):
+        expected = hashlib.sha256(b'{"a":1,"b":2}').hexdigest()
+
+        self.assertEqual(self.engine.canonical_hash({"b": 2, "a": 1}), expected)
+        self.assertEqual(
+            self.engine.canonical_hash({"b": 2, "a": 1}),
+            self.engine.canonical_hash({"a": 1, "b": 2}),
+        )
+
+    def test_load_control_plane_returns_all_controls_and_schemas(self):
+        bundle = self.engine.load_control_plane(ROOT)
+
+        self.assertEqual(
+            set(bundle),
+            {"root", "project", "routing", "policy", "lifecycle", "schemas"},
+        )
+        self.assertEqual(set(bundle["schemas"]), {"project", "routing", "policy", "context"})
+
+    def test_repository_control_plane_is_valid(self):
+        self.assertEqual(self.engine.validate_bundle(ROOT, None), [])
+
+    def test_unknown_top_level_control_key_fails_actionably(self):
+        with temporary_repository() as root:
+            project_path = root / ".claude/project.yaml"
+            project = yaml.safe_load(project_path.read_text())
+            project["unexpected"] = True
+            project_path.write_text(yaml.safe_dump(project, sort_keys=False))
+
+            errors = self.engine.validate_bundle(root, None)
+
+        self.assertTrue(errors)
+        self.assertTrue(all(error.startswith("ERROR:") for error in errors))
+        self.assertTrue(any("project" in error and "unexpected" in error for error in errors))
+
+    def test_duplicate_yaml_key_fails_actionably(self):
+        with temporary_repository() as root:
+            project_path = root / ".claude/project.yaml"
+            project_path.write_text(project_path.read_text() + "schema_version: 1\n")
+
+            errors = self.engine.validate_bundle(root, None)
+
+        self.assertEqual(len(errors), 1)
+        self.assertIn("project: invalid YAML", errors[0])
+        self.assertIn("duplicate key 'schema_version'", errors[0])
+
+    def test_unknown_classification_route_fails(self):
+        with temporary_repository() as root:
+            routing_path = root / ".claude/routing.yaml"
+            routing = yaml.safe_load(routing_path.read_text())
+            routing["classification_rules"][0]["add"] = ["missing_route"]
+            routing_path.write_text(yaml.safe_dump(routing, sort_keys=False))
+
+            errors = self.engine.validate_bundle(root, None)
+
+        self.assertIn(
+            "ERROR: routing.classification_rules[0].add: unknown route 'missing_route'",
+            errors,
+        )
+
+    def test_duplicate_route_reference_fails(self):
+        with temporary_repository() as root:
+            routing_path = root / ".claude/routing.yaml"
+            routing = yaml.safe_load(routing_path.read_text())
+            routing["routes"]["security_sensitive"]["rules"] = [
+                "rules/security.md",
+                "rules/security.md",
+            ]
+            routing_path.write_text(yaml.safe_dump(routing, sort_keys=False))
+
+            errors = self.engine.validate_bundle(root, None)
+
+        self.assertTrue(any("non-unique elements" in error for error in errors), errors)
+
+    def test_existing_markdown_namespace_requires_referenced_files(self):
+        with temporary_repository() as root:
+            (root / ".claude/rules").mkdir()
+
+            errors = self.engine.validate_bundle(root, None)
+
+        self.assertIn(
+            "ERROR: routing markdown path does not exist: .claude/rules/engineering.md",
+            errors,
+        )
+
+    def test_lifecycle_path_requires_declared_transition(self):
+        with temporary_repository() as root:
+            lifecycle_path = root / ".claude/lifecycle.yaml"
+            lifecycle = yaml.safe_load(lifecycle_path.read_text())
+            lifecycle["transitions"] = [
+                transition
+                for transition in lifecycle["transitions"]
+                if not (
+                    transition["from"] == "CLASSIFIED"
+                    and transition["to"] == "VALIDATING"
+                )
+            ]
+            lifecycle_path.write_text(yaml.safe_dump(lifecycle, sort_keys=False))
+
+            errors = self.engine.validate_bundle(root, None)
+
+        self.assertIn(
+            "ERROR: lifecycle.paths.maintenance: transition CLASSIFIED -> VALIDATING is not declared",
+            errors,
+        )
+
+    def test_context_is_schema_validated(self):
+        with temporary_repository() as root:
+            context_path = root / "context.yaml"
+            context_path.write_text("schema_version: 1\nunexpected: true\n")
+
+            errors = self.engine.validate_bundle(root, context_path)
+
+        self.assertTrue(any("context" in error and "unexpected" in error for error in errors))
+
+    def test_valid_cli_emits_one_json_object(self):
+        result = subprocess.run(
+            [sys.executable, str(ENGINE_PATH), "validate", "--root", str(ROOT)],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+
+        payload = json.loads(result.stdout)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(result.stderr, "")
+        self.assertTrue(payload["valid"])
+        self.assertEqual(payload["errors"], [])
+        self.assertEqual(result.stdout.count("\n"), 1)
+
+    def test_invalid_cli_input_emits_json_without_traceback(self):
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(ENGINE_PATH),
+                "validate",
+                "--root",
+                str(ROOT / "does-not-exist"),
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+
+        payload = json.loads(result.stdout)
+        self.assertEqual(result.returncode, 1)
+        self.assertFalse(payload["valid"])
+        self.assertTrue(all(error.startswith("ERROR:") for error in payload["errors"]))
+        self.assertNotIn("Traceback", result.stdout + result.stderr)
+        self.assertEqual(result.stdout.count("\n"), 1)
+
+    def test_malformed_yaml_cli_emits_json_without_traceback(self):
+        with temporary_repository() as root:
+            (root / ".claude/project.yaml").write_text("project: [\n")
+            result = subprocess.run(
+                [sys.executable, str(ENGINE_PATH), "validate", "--root", str(root)],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+
+        payload = json.loads(result.stdout)
+        self.assertEqual(result.returncode, 1)
+        self.assertFalse(payload["valid"])
+        self.assertIn("ERROR: project: invalid YAML", payload["errors"][0])
+        self.assertNotIn("Traceback", result.stdout + result.stderr)
+        self.assertEqual(result.stdout.count("\n"), 1)
+
+    def test_only_validate_is_a_public_command(self):
+        result = subprocess.run(
+            [sys.executable, str(ENGINE_PATH), "evaluate", "--root", str(ROOT)],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+
+        payload = json.loads(result.stdout)
+        self.assertEqual(result.returncode, 1)
+        self.assertFalse(payload["valid"])
+        self.assertIn("ERROR: argument command", payload["errors"][0])
+        self.assertNotIn("Traceback", result.stdout + result.stderr)
+
+
+if __name__ == "__main__":
+    unittest.main()
