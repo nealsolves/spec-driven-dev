@@ -49,12 +49,14 @@ def run_script(
     cwd: Path | None = None,
     python: str | None = None,
     through_bash: bool = False,
+    environment_updates: dict[str, str] | None = None,
 ) -> subprocess.CompletedProcess[str]:
     command = [str(root / script), *arguments]
     if through_bash:
         command.insert(0, "bash")
     environment = os.environ.copy()
     environment["POLICY_PYTHON"] = python or sys.executable
+    environment.update(environment_updates or {})
     return subprocess.run(
         command,
         cwd=cwd or root,
@@ -217,6 +219,126 @@ class ValidatorCliTest(unittest.TestCase):
         self.assertIn("Python 3.11+", result.stderr)
         self.assertIn("PyYAML", result.stderr)
         self.assertIn("jsonschema", result.stderr)
+
+    def test_non_python_executable_cannot_spoof_runtime_probe(self):
+        with repository_copy() as root:
+            result = run_script(root, python="/usr/bin/true")
+
+        self.assertEqual(result.returncode, 3, result.stdout + result.stderr)
+        self.assertIn("BLOCKED_TECHNICAL", result.stderr)
+        self.assertNotIn("OK: instruction system validation passed", result.stdout)
+
+    def test_runtime_probe_rejects_extra_sentinel_output(self):
+        with repository_copy() as root:
+            fake_python = root.parent / "fake-python"
+            fake_python.write_text(
+                "#!/bin/sh\n"
+                "printf 'POLICY_RUNTIME_OK_3_11_PYYAML_6_JSONSCHEMA_4\\n\\n'\n",
+                encoding="utf-8",
+            )
+            fake_python.chmod(0o755)
+
+            result = run_script(root, python=str(fake_python))
+
+        self.assertEqual(result.returncode, 3, result.stdout + result.stderr)
+        self.assertIn("BLOCKED_TECHNICAL", result.stderr)
+        self.assertNotIn("OK: instruction system validation passed", result.stdout)
+
+    def test_incompatible_dependency_version_blocks_runtime_probe(self):
+        with repository_copy() as root:
+            site_directory = root.parent / "controlled-site"
+            site_directory.mkdir()
+            (site_directory / "sitecustomize.py").write_text(
+                "from importlib import metadata\n"
+                "_real_version = metadata.version\n"
+                "def _controlled_version(name):\n"
+                "    if name == 'PyYAML':\n"
+                "        return '7.0'\n"
+                "    return _real_version(name)\n"
+                "metadata.version = _controlled_version\n",
+                encoding="utf-8",
+            )
+
+            result = run_script(
+                root,
+                environment_updates={"PYTHONPATH": str(site_directory)},
+            )
+
+        self.assertEqual(result.returncode, 3, result.stdout + result.stderr)
+        self.assertIn("BLOCKED_TECHNICAL", result.stderr)
+        self.assertNotIn("OK: instruction system validation passed", result.stdout)
+
+    def test_non_object_engine_json_is_an_actionable_validation_error(self):
+        with repository_copy() as root:
+            engine_path = root / "scripts/policy-engine.py"
+            engine_path.write_text("print('[]')\n", encoding="utf-8")
+
+            result = run_script(root)
+
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("policy engine response must be a JSON object", result.stdout)
+        self.assertNotIn("Traceback", result.stdout + result.stderr)
+
+    def test_invalid_utf8_instruction_artifact_is_aggregated_without_traceback(self):
+        with repository_copy() as root:
+            (root / ".claude/profiles/regulated.md").write_bytes(b"\xff\xfe")
+
+            result = run_script(root)
+
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("ERROR:", result.stdout)
+        self.assertIn(".claude/profiles/regulated.md", result.stdout)
+        self.assertNotIn("Traceback", result.stdout + result.stderr)
+
+    def test_missing_reference_definition_fails(self):
+        with repository_copy() as root:
+            claude_path = root / "CLAUDE.md"
+            claude_path.write_text(
+                claude_path.read_text(encoding="utf-8")
+                + "\n[Broken reference][missing-ref]\n",
+                encoding="utf-8",
+            )
+
+            result = run_script(root)
+
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("missing reference definition", result.stdout)
+        self.assertIn("missing-ref", result.stdout)
+
+    def test_broken_reference_definition_target_fails(self):
+        with repository_copy() as root:
+            claude_path = root / "CLAUDE.md"
+            claude_path.write_text(
+                claude_path.read_text(encoding="utf-8")
+                + "\n[Broken reference][missing-ref]\n"
+                + "[missing-ref]: missing-reference.md\n",
+                encoding="utf-8",
+            )
+
+            result = run_script(root)
+
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("broken local Markdown link", result.stdout)
+        self.assertIn("missing-reference.md", result.stdout)
+
+    def test_balanced_parentheses_and_angle_bracket_destinations_are_valid(self):
+        with repository_copy() as root:
+            (root / "reference(target).md").write_text("# Target\n", encoding="utf-8")
+            (root / "reference target.md").write_text("# Target\n", encoding="utf-8")
+            claude_path = root / "CLAUDE.md"
+            claude_path.write_text(
+                claude_path.read_text(encoding="utf-8")
+                + "\n[Inline parentheses](reference(target).md)\n"
+                + "[Angle destination](<reference target.md>)\n"
+                + "[Reference parentheses][paren-ref]\n"
+                + "[paren-ref]: reference(target).md\n",
+                encoding="utf-8",
+            )
+
+            result = run_script(root)
+
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertTrue(result.stdout.endswith("OK: instruction system validation passed\n"))
 
     def test_readme_documents_supported_python_invocation(self):
         readme = (ROOT / ".claude/README.md").read_text(encoding="utf-8")
