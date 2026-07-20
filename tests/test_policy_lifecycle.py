@@ -61,12 +61,21 @@ class PolicyLifecycleTest(unittest.TestCase):
 
     def open_escalation(self):
         context = load_yaml("escalation-open.yaml")
-        current = self.engine.evaluate(self.bundle, context)
-        self.assertEqual(len(current["escalations"]), 1)
-        context["open_escalation"] = copy.deepcopy(current["escalations"][0])
+        current = self.refresh_open_escalation(context)
         response = load_yaml("response-option-2.yaml")
         response["hashes"] = copy.deepcopy(current["hashes"])
         return context, response, current
+
+    def refresh_open_escalation(self, context, bundle=None):
+        bundle = bundle or self.bundle
+        for _ in range(2):
+            current = self.engine.evaluate(bundle, context)
+            self.assertEqual(len(current["escalations"]), 1)
+            context["open_escalation"] = copy.deepcopy(current["escalations"][0])
+        current = self.engine.evaluate(bundle, context)
+        self.assertEqual(context["open_escalation"], current["escalations"][0])
+        self.assertEqual(context["open_escalation"]["hashes"], current["hashes"])
+        return current
 
     def test_valid_maintenance_completion_returns_new_decision_without_mutation(self):
         context, decision = self.context_with_evidence(
@@ -320,6 +329,33 @@ class PolicyLifecycleTest(unittest.TestCase):
         ] = "manual_override"
         with self.assertRaisesRegex(self.engine.PolicyInputError, "validated_response"):
             self.engine.respond(invalid_recovery, context, response)
+
+    def test_resume_state_tampering_stales_old_packet_and_response_hashes(self):
+        context, response, _ = self.open_escalation()
+        context["open_escalation"]["resume_state"] = "COMPLETE"
+
+        with self.assertRaisesRegex(self.engine.PolicyInputError, "context_hash"):
+            self.engine.respond(self.bundle, context, response)
+
+    def test_recomputed_hashes_cannot_authorize_terminal_or_cross_path_resume(self):
+        terminal, _, _ = self.open_escalation()
+        terminal["open_escalation"]["resume_state"] = "COMPLETE"
+        terminal_current = self.refresh_open_escalation(terminal)
+        terminal_response = load_yaml("response-option-2.yaml")
+        terminal_response["hashes"] = terminal_current["hashes"]
+
+        with self.assertRaisesRegex(self.engine.PolicyInputError, "terminal.*COMPLETE"):
+            self.engine.respond(self.bundle, terminal, terminal_response)
+
+        cross_path, _, _ = self.open_escalation()
+        cross_path["workflow_family"] = "maintenance"
+        cross_path["open_escalation"]["resume_state"] = "SPECIFIED"
+        cross_current = self.refresh_open_escalation(cross_path)
+        cross_response = load_yaml("response-option-2.yaml")
+        cross_response["hashes"] = cross_current["hashes"]
+
+        with self.assertRaisesRegex(self.engine.PolicyInputError, "active maintenance path"):
+            self.engine.respond(self.bundle, cross_path, cross_response)
 
     def test_option_2_response_resolves_copy_records_conditions_and_reevaluates(self):
         context, response, current = self.open_escalation()

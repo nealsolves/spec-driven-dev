@@ -917,7 +917,6 @@ def _context_hash(context: dict[str, Any]) -> str:
         "decision",
         "decisions",
         "evaluation",
-        "open_escalation",
     ):
         hash_input.pop(generated_key, None)
     evidence = hash_input.get("evidence")
@@ -930,6 +929,9 @@ def _context_hash(context: dict[str, Any]) -> str:
         for response in responses:
             if isinstance(response, dict):
                 response.pop("hashes", None)
+    open_escalation = hash_input.get("open_escalation")
+    if isinstance(open_escalation, dict):
+        open_escalation.pop("hashes", None)
     return canonical_hash(hash_input)
 
 
@@ -1542,6 +1544,16 @@ def respond(
         if len(matching_packets) != 1 or packet != matching_packets[0]:
             raise PolicyInputError(
                 "open_escalation: packet does not match exactly one current decision"
+            )
+        path_name = _lifecycle_path_name(context)
+        if resume_state == "COMPLETE":
+            raise PolicyInputError(
+                "open_escalation.resume_state: terminal state COMPLETE cannot be resumed"
+            )
+        if resume_state not in bundle["lifecycle"]["paths"][path_name]:
+            raise PolicyInputError(
+                f"open_escalation.resume_state: {resume_state} is not on the active "
+                f"{path_name} path"
             )
         if current["authority"]["outcome"] == "prohibited":
             raise PolicyInputError("current action is prohibited")

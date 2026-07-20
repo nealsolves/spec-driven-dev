@@ -640,6 +640,36 @@ class PolicyEvaluationTest(unittest.TestCase):
             source_result["hashes"]["context_hash"],
         )
 
+    def test_context_hash_includes_escalation_semantics_but_not_packet_hashes(self):
+        context = load_context("escalation-open.yaml")
+        baseline = self.engine._context_hash(context)
+
+        semantic_changes = {
+            "resume_state": "VALIDATING",
+            "decision": {"clarification_id": "OTHER", "question": "Changed?"},
+            "options": [
+                {
+                    "id": "option_x",
+                    "consequence": "A materially different choice.",
+                }
+            ],
+            "recommended_option": "option_1",
+            "status": "resolved",
+        }
+        for field, value in semantic_changes.items():
+            with self.subTest(packet_field=field):
+                changed = copy.deepcopy(context)
+                changed["open_escalation"][field] = value
+                self.assertNotEqual(baseline, self.engine._context_hash(changed))
+
+        prior_hashes_only = copy.deepcopy(context)
+        prior_hashes_only["open_escalation"]["hashes"] = {
+            "policy_hash": "3" * 64,
+            "context_hash": "4" * 64,
+            "change_hash": "5" * 64,
+        }
+        self.assertEqual(baseline, self.engine._context_hash(prior_hashes_only))
+
     def test_lifecycle_evidence_references_must_exist_inside_repository(self):
         context = load_context("maintenance-low.yaml")
         template = {
