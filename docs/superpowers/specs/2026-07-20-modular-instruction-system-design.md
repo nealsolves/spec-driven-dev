@@ -92,6 +92,21 @@ Use a policy-driven modular system with three layers:
 
 Templates capture evidence and portable scripts verify and execute the system.
 
+### Practical implementation boundary
+
+The control plane is a local CLI and file format, not a hosted workflow system.
+Implementation is limited to pure policy functions, one command-line entry
+point, declarative YAML, narrow JSON Schemas, file-based evidence, and unit or
+fixture tests. It uses no daemon, database, message queue, plugin framework,
+schema generator, custom policy language, or vendor-specific deployment code.
+It evaluates and records whether an external action is authorized and safe to
+retry; the coding agent invokes the available external capability.
+
+The engine supports only the operations named in this design. Policy files use
+explicit condition structures—never embedded code, `eval`, or a general-purpose
+rules DSL. New abstraction is deferred until at least two implemented policies
+need the same behavior.
+
 This approach was selected over:
 
 1. A Spec Kit preset-only implementation, which would couple the contract to
@@ -110,7 +125,7 @@ This approach was selected over:
 
 - purpose and project identity;
 - authority and actual-versus-intended behavior;
-- startup and feature resolution;
+- startup, workflow selection, and conditional feature resolution;
 - universal invariants;
 - Spec Kit lifecycle and gates;
 - change classification and routing summary;
@@ -133,19 +148,25 @@ The control plane supplements Markdown policy with these files:
 | `.claude/classification-rules.yaml` | Derive classifications from observable change facts. |
 | `.claude/lifecycle.yaml` | Define states, allowed transitions, and machine-checkable prerequisites. |
 | `.claude/exception-policy.yaml` | Define autonomous exception limits, evidence, expiry, and prohibited cases. |
-| `.claude/evidence-schema.yaml` | Define findings, decisions, transition evidence, and escalation packets. |
+| `.claude/evidence-schema.yaml` | Declare evidence types and requirements for gates and decisions. |
+| `.claude/resource-policy.yaml` | Bound iterations, spend, retries, elapsed time, and external resource use. |
+
+Formal JSON Schemas under `.claude/schemas/` validate the parsed representation
+of every control-plane and evidence record. YAML remains the human-authored
+format; `evidence-schema.yaml` declares which schema-backed evidence is required
+for each control rather than duplicating JSON Schema definitions.
 
 `scripts/policy-engine.py` is the deterministic executor. It accepts a feature
-context and control-plane files, validates the schemas, derives routes and risk,
-checks authority and exceptions, validates a requested state transition, and
-emits a machine-readable decision record. It never infers facts internally.
-Agents may extract facts from repository evidence, but route, score, authority,
-and transition evaluation occur in code.
+or maintenance context and control-plane files, validates the schemas, derives
+routes and risk, checks authority and exceptions, validates a requested state
+transition, and emits a machine-readable decision record. It never infers facts
+internally. Agents may extract facts from repository evidence, but route, score,
+authority, and transition evaluation occur in code.
 
-The engine uses Python and PyYAML. PyYAML is a control-plane runtime dependency,
-not a validation-only convenience; a missing parser produces
-`BLOCKED_TECHNICAL` rather than a nondeterministic fallback. Shell validators
-may still provide reduced structural diagnostics when Python or PyYAML is
+The engine uses Python, PyYAML, and `jsonschema`. They are control-plane runtime
+dependencies, not validation-only conveniences; a missing runtime dependency
+produces `BLOCKED_TECHNICAL` rather than a nondeterministic fallback. Shell
+validators may still provide reduced structural diagnostics when the runtime is
 unavailable.
 
 ### Routing and project configuration
@@ -157,8 +178,18 @@ workflow and rule files load, with duplicates de-duplicated. The agent does not
 select these classifications directly: `classification-rules.yaml` maps
 validated facts to them.
 
-`.claude/project-profile.yaml` defaults to a production-capable solo developer
-and uses reusable placeholders for project identity. Its Spec Kit section uses:
+`.claude/project-profile.yaml` is solo-capable but unconfigured. It uses reusable
+placeholders for project identity and begins with:
+
+```yaml
+project:
+  lifecycle: unconfigured
+authority:
+  remote_actions_enabled: false
+  production_actions_enabled: false
+```
+
+Its Spec Kit section uses:
 
 ```yaml
 tested_version: unknown
@@ -170,20 +201,43 @@ The README records v0.13.0 as the lifecycle design reference, not a test claim.
 Repository owners replace `unknown` only after validating their instantiated
 repository.
 
-The reusable profile selects conservative control-plane defaults and disables
-remote mutations. Instantiation may explicitly authorize branch pushes, PR
-creation and updates, merging, releases, and deployments by risk tier. Absence
-of authority means the action is not authorized; it does not mean a human must
-automatically approve it.
+The reusable profile prohibits remote mutations, merges, releases, deployments,
+and autonomous risk exceptions until project initialization passes. Local
+design, specification, implementation, and validation remain allowed.
+Initialization may set `project.lifecycle: production`, select `solo` as the
+base profile, and explicitly authorize branch pushes, PR creation and updates,
+merging, releases, and deployments by risk tier. Absence of authority means the
+action is not authorized; it does not mean a human must automatically approve
+it.
 
 ### Observable facts and deterministic classification
 
 Feature context contains typed facts such as runtime-code changes,
 authentication or authorization impact, customer-data reads and writes, public
 API changes, schema migrations, infrastructure changes, LLM use, and production
-deployment intent. Each fact records `true`, `false`, or `unknown` plus its
-evidence source. Material unknowns prevent `CLASSIFIED`; the agent first gathers
-more evidence, then uses clarification policy if the fact remains unknown.
+deployment intent. Fact validity and fact truth are distinct. The engine can
+validate structure, provenance, evidence existence, contradictions, and
+corroboration policy; it cannot prove that an extractor's assertion is true.
+
+Each fact therefore records:
+
+```yaml
+value: false
+source_type: diff_analysis
+source_ref: evidence/diff-analysis.json
+extractor: repository-fact-extractor-v1
+confidence: 0.96
+observed_at_commit: abc123
+```
+
+Material facts use `true`, `false`, or `unknown`. Material `false` assertions
+require corroboration from at least two configured independent source types,
+such as path analysis, semantic diff analysis, dependency graph analysis, or
+contract-change detection. Material `unknown` values and facts below the
+configured confidence threshold fail closed before `CLASSIFIED`; the agent
+first gathers more evidence, then applies clarification policy if uncertainty
+remains. A source is independent only when its extractor and evidence basis are
+distinct, not merely when the same conclusion is copied into two files.
 
 Classification rules are declarative implications. For example:
 
@@ -194,47 +248,48 @@ uses_llm -> ai_system_change
 deploys_to_production -> production_impact + observability_impact + release
 ```
 
-The policy engine rejects unknown facts, contradictory mutually exclusive
-facts, and unsupported evidence references. It emits every matched rule so the
-result can be audited.
+The policy engine rejects unresolved material facts, contradictory mutually
+exclusive facts, unsupported evidence references, inadequate corroboration, and
+facts observed against a stale commit. It emits every matched rule and
+provenance record so the result can be audited.
 
 ### Computable risk
 
-`risk-model.yaml` assigns integer weights to facts and defines non-overlapping
-low, moderate, high, and critical thresholds. The score record contains each
-factor, weight, evidence, subtotal, automatic override, and final tier.
+`risk-model.yaml` groups factors into security, data, operational,
+compatibility, financial, and delivery dimensions. Each factor has a severity,
+evidence requirement, and optional `subsumes` relationship. Each dimension has
+one simple aggregation rule:
 
-The reusable baseline is:
+| Dimension | Baseline aggregation |
+|---|---|
+| Security | Highest factor plus explicitly non-subsumed modifiers, capped. |
+| Data | Highest factor. |
+| Operational | Sum of independent factors, capped. |
+| Compatibility | Highest factor. |
+| Financial | Highest factor. |
+| Delivery | Sum of independent factors, capped. |
 
-| Factor | Weight |
-|---|---:|
-| Authentication or authorization | 5 |
-| Regulated data | 5 |
-| Irreversible data migration | 5 |
-| Production infrastructure | 4 |
-| Public contract break | 4 |
-| Customer data | 4 |
-| Financial transaction | 4 |
-| New external dependency | 2 |
-| Runtime behavior change | 2 |
-| AI system change | 2 |
-| Documentation only | -5 |
+Dimension scores map to low, moderate, high, or critical using non-overlapping
+thresholds declared in the file. The overall tier is the highest dimension
+tier. It increases only through an explicit cross-domain escalation rule, such
+as authorization changes combined with regulated-data writes, rather than by
+blindly adding correlated factors. Runtime behavior does not add again when it
+is declared subsumed by a more specific factor in the same decision context.
+Documentation-only is a route constraint, not a negative score, and is invalid
+when runtime, dependency, infrastructure, data, or deployment facts are true.
 
-Scores are floored at zero. Low is 0–2, moderate is 3–6, high is 7–11,
-and critical is 12 or greater. Instantiated profiles may raise weights or lower
-thresholds; weakening the baseline requires an authorized policy change and a
-recorded rationale.
+The decision record contains factors, dimensions, aggregation steps, caps,
+subsumption, cross-domain rules, evidence, automatic overrides, and final tier.
+The model ships with table-driven examples for documentation-only maintenance,
+a runtime feature, an authorization change reading customer data, a reversible
+migration, and an irreversible production migration.
 
-Automatic critical conditions override arithmetic. They include destructive
+Automatic critical conditions override aggregation. They include destructive
 production work without a verified recovery path, exposed credentials,
 unsupported regulatory exceptions, unbounded financial commitments, and any
-configured prohibited condition. Negative factors such as documentation-only
-may apply only when incompatible runtime and production facts are false; the
-engine rejects attempts to reduce risk using contradictory facts.
-
-Risk is recalculated whenever the diff, deployment target, data use, exception,
-or feature facts change. A higher recomputed tier invalidates earlier authority
-and transition decisions until enhanced prerequisites are satisfied.
+configured prohibited condition. Instantiated profiles may increase severity or
+lower thresholds; weakening the baseline is an instruction-system change and
+requires explicit authority.
 
 ### Authority policy
 
@@ -273,6 +328,60 @@ regulated segregation are evaluated as separate authority conditions and may
 override the tier row. Remote-action rows remain disabled until an instantiated
 profile explicitly enables each action and names its target repository.
 
+### Deny-overrides precedence
+
+When applicable policies disagree, the most restrictive outcome wins:
+
+```text
+prohibited > human_required > autonomous_with_enhanced_gates > autonomous
+```
+
+Policy sources are authoritative in this order:
+
+```text
+external legal or contractual constraint
+> constitution
+> regulated overlay
+> prohibited-condition policy
+> project authority policy
+> base profile
+> workflow default
+```
+
+A lower source cannot weaken a higher source. A higher source may define an
+explicit resolution for a named conflict; silence always preserves the more
+restrictive outcome. The engine records every contributing decision and the
+precedence step that selected the final result. Validators exercise the full
+matrix and reject unknown outcome levels or ambiguous source ranks.
+
+### Control-plane self-governance
+
+Changes to `CLAUDE.md`, control-plane YAML, schemas, instruction modules,
+`scripts/policy-engine.py`, or validation scripts activate
+`instruction_system_change`. The trusted policy revision at the branch merge
+base evaluates the proposed revision. The proposed revision cannot authorize,
+score, classify, or approve itself.
+
+Every such change requires:
+
+- `evaluated_by_policy_hash` and `proposed_policy_hash`;
+- before-and-after semantic policy comparison;
+- identification of added, removed, and weakened controls;
+- a control-plane version increment and schema-version impact assessment;
+- regression fixtures for each changed decision outcome;
+- authority under the trusted revision for any weakening.
+
+Any proposal that expands autonomous production, financial, destructive,
+security-exception, sensitive-data, or regulatory authority enters
+`HUMAN_DECISION_REQUIRED`. A prohibited trusted-policy result cannot be relaxed
+by the proposal under evaluation.
+
+Initial installation is the only bootstrap case because no trusted control
+plane exists at the branch base. It requires explicit human approval of this
+design, records `bootstrap: true`, and installs the unconfigured,
+production-disabled profile. After bootstrap, no missing-base fallback is
+allowed.
+
 ### Modules
 
 Rule modules cover engineering, testing, security, architecture, data privacy,
@@ -281,10 +390,24 @@ ownership, AI systems, and documentation. Every rule module provides purpose,
 applicability, inputs, mandatory controls, evidence, exceptions, solo
 interpretation, relevant overlay notes, and a completion checklist.
 
-Workflow modules cover features, bugs, maintenance, dependencies, brownfield
-behavior, releases, and incident hotfixes. Each defines entry criteria,
-artifacts, gates, ordered steps, evidence, exit criteria, solo interpretation,
-and stop conditions.
+Workflow modules cover project initialization, instruction-system changes,
+features, bugs, maintenance, dependencies, brownfield behavior, releases, and
+incident hotfixes. Each defines entry criteria, artifacts, gates, ordered steps,
+evidence, exit criteria, solo interpretation, and stop conditions.
+
+`workflows/project-initialization.md` deterministically derives or collects
+project identity, repository target, lifecycle, environments, known install,
+test, lint, typecheck, and build commands, data classifications, authority
+matrix, financial limits, production permissions, overlays, deployment and
+rollback mechanisms, Spec Kit compatibility, escalation owner, and external
+obligations. Unknown values remain explicit. Initialization passes only when
+formal schema validation and required evidence are complete; until then, remote
+mutations and autonomous exceptions remain prohibited.
+
+`workflows/instruction-system-change.md` requires trusted-base evaluation,
+semantic policy comparison, schema/version assessment, regression fixtures,
+and authority checks for weakening. `instruction_system_change` routes to this
+workflow; it is not treated as ordinary documentation maintenance.
 
 Profiles distinguish solo, team, prototype, and regulated-overlay behavior.
 One person may hold all solo roles. High-risk solo work requires a temporally
@@ -311,11 +434,58 @@ record and sidecar context under `evidence/maintenance/<change-id>/`. Template
 files define both forms, but no feature or evidence instance is created in this
 reusable repository.
 
+The implementation provides focused JSON Schema Draft 2020-12 files for project
+profile, instruction context, authority policy, risk model, classification
+rules, lifecycle, exception policy, resource policy, decision record, finding,
+escalation packet, human-decision response, and external-action record. Schemas
+share definitions where useful but are handwritten and narrow; the design does
+not add schema generation, a registry service, or a database.
+
+```text
+.claude/schemas/
+├── project-profile.schema.json
+├── instruction-context.schema.json
+├── authority-policy.schema.json
+├── risk-model.schema.json
+├── classification-rules.schema.json
+├── lifecycle.schema.json
+├── exception-policy.schema.json
+├── resource-policy.schema.json
+├── decision-record.schema.json
+├── finding.schema.json
+├── escalation-packet.schema.json
+├── human-decision-response.schema.json
+└── external-action.schema.json
+```
+
 When human action is required, the system creates a compact escalation packet
 containing the exact decision, triggering policy, reason automation stopped,
 evidence already collected, bounded options and consequences, a recommended
 resolution, and the required response format. Open-ended approval requests are
 invalid.
+
+Human responses are machine-readable and include decision ID, selected option,
+actor, authority basis, timestamp, feature or maintenance scope, commit,
+conditions, and signed or authoritative source reference. The engine accepts a
+response only when it matches an open unexpired decision, the actor has the
+required authority, feature and policy hashes remain current, and conditions
+have been incorporated. It then reevaluates the blocked transition; it never
+blindly resumes or permits a decision to be replayed against changed context.
+
+### External-action idempotency
+
+Branch creation, push, PR creation and merge, release, deployment, rollback,
+issue creation, and exception creation use schema-valid action records under
+`evidence/actions/`. Each record contains `action_id`, `idempotency_key`,
+`requested_state`, `target`, `policy_decision_hash`, `attempts`,
+`external_reference`, `observed_result`, and `reconciled_at`.
+
+Before executing or retrying, the agent must query actual external state through
+the available capability and ask the policy engine to reconcile it. A matching
+completed action returns its prior result; an uncertain or conflicting state
+blocks retry. This repository supplies record validation, deterministic keys,
+and reconciliation rules, not vendor-specific deployment adapters or a remote
+orchestration service.
 
 ### Status
 
@@ -339,17 +509,21 @@ An agent performs these operations in order:
 
 1. Read `CLAUDE.md`, `.claude/project-profile.yaml`, and
    `.claude/instructions.yaml`.
-2. Resolve the active feature from explicit user selection,
-   `SPECIFY_FEATURE_DIRECTORY`, `.specify/feature.json`, or the branch pattern.
-3. Load engineering, testing, and documentation as always-on rules.
-4. Extract typed facts and attach repository evidence to each fact.
-5. Run the policy engine to derive classifications, modules, score, tier,
+2. Determine the workflow family from intent: project initialization, feature,
+   bug, brownfield, maintenance, dependency, instruction-system, release, or
+   incident.
+3. Resolve an active feature only when that workflow requires one, using
+   explicit selection, `SPECIFY_FEATURE_DIRECTORY`, `.specify/feature.json`, or
+   the branch pattern. Otherwise assign a stable maintenance/change ID.
+4. Load engineering, testing, and documentation as always-on rules.
+5. Extract typed facts and attach repository evidence to each fact.
+6. Run the policy engine to derive classifications, modules, risk tier,
    authority boundaries, exception limits, and transition prerequisites.
-6. Load the base profile, overlays, routed rules, and workflows.
-7. Read active feature artifacts when applicable.
-8. Record or update machine-readable feature context and its Markdown summary.
-9. Request the next lifecycle transition from the policy engine.
-10. Proceed autonomously, apply enhanced gates, generate an escalation packet,
+7. Load the base profile, overlays, routed rules, and workflows.
+8. Read active feature artifacts when applicable.
+9. Record or update machine-readable context and its Markdown summary.
+10. Request the next lifecycle transition from the policy engine.
+11. Proceed autonomously, apply enhanced gates, generate an escalation packet,
     or stop as dictated by the engine outcome.
 
 Ambiguous feature resolution, a missing required module, a constitutional
@@ -359,13 +533,27 @@ exceptional state and remediation path.
 
 ### Lifecycle state machine
 
-Normal states are:
+The full delivery spine is:
 
 ```text
 UNCLASSIFIED -> CLASSIFIED -> SPECIFIED -> CLARIFIED -> PLANNED -> TASKED
 -> ANALYZED -> IMPLEMENTING -> VALIDATING -> REVIEWING -> CONVERGING
--> RELEASE_READY -> DEPLOYING -> VERIFYING -> COMPLETE
 ```
+
+The workflow and deployment intent select an explicit terminal path:
+
+```text
+Code delivered:     CONVERGING -> COMPLETE
+Release artifact:   CONVERGING -> RELEASE_READY -> COMPLETE
+Deployment:         CONVERGING -> RELEASE_READY -> DEPLOYING
+                    -> VERIFYING -> COMPLETE
+Maintenance:        UNCLASSIFIED -> CLASSIFIED -> VALIDATING
+                    -> REVIEWING -> COMPLETE
+```
+
+Project initialization and incident workflows have similarly explicit paths in
+`lifecycle.yaml`. No workflow enters release or deployment states without
+declared release or deployment intent.
 
 Exceptional states are `BLOCKED_REQUIREMENT`, `BLOCKED_POLICY`,
 `BLOCKED_TECHNICAL`, `HUMAN_DECISION_REQUIRED`, `ROLLBACK_REQUIRED`, and
@@ -373,12 +561,44 @@ Exceptional states are `BLOCKED_REQUIREMENT`, `BLOCKED_POLICY`,
 failure state, and evidence output. Skipping states requires an explicit
 workflow rule, such as reduced maintenance scope; it is never an agent shortcut.
 
+Every exceptional state has a declared recovery: gather or clarify requirements,
+change the request or obtain authorized policy change, apply a bounded technical
+alternative, ingest a valid human response, execute verified rollback, or enter
+the incident workflow. A state with no configured recovery is invalid and fails
+control-plane validation.
+
 Transitions are idempotent. The engine records policy version hashes and input
 evidence hashes, preventing stale evidence from authorizing a changed diff or
 deployment. Examples include requiring calculated risk and resolved
 applicability before `PLANNED -> TASKED`, clean CI and review resolution before
 `REVIEWING -> CONVERGING`, and release evidence, deployment authority, verified
 rollback, and readiness before `RELEASE_READY -> DEPLOYING`.
+
+### Change detection and selective invalidation
+
+Every decision binds to base commit, head commit, normalized diff hash,
+control-plane hash, project-profile hash, feature-context hash, dependency-lock
+hash, deployment-manifest hash, exception-set hash, and target-environment
+identity. Non-applicable inputs use an explicit `not_applicable`, never an empty
+or omitted value.
+
+`lifecycle.yaml` defines the decision dependency graph. Input changes invalidate
+only dependent evidence:
+
+- a documentation-only diff change invalidates validation, review, and
+  convergence, but not an unchanged architecture decision;
+- a feature-context or material-fact change invalidates classification and all
+  downstream decisions;
+- a control-plane change activates `instruction_system_change`, is evaluated
+  under the trusted revision, and invalidates classification onward;
+- a dependency-lock change invalidates dependency classification, risk,
+  security evidence, tests, review, and later decisions;
+- a deployment target or manifest change invalidates production readiness,
+  deployment authority, release readiness, deployment, and verification;
+- an exception-set change invalidates every gate that consumed an exception.
+
+The engine refuses a transition backed by stale decision hashes and reports the
+smallest evidence set that must be regenerated.
 
 ### Clarification triage
 
@@ -422,6 +642,22 @@ The loop continues until findings are resolved or excepted, the configured
 iteration/cost limit creates `BLOCKED_TECHNICAL`, or policy triggers
 `HUMAN_DECISION_REQUIRED`. High-risk work requires all enhanced review roles.
 
+### Resource and cost bounds
+
+`resource-policy.yaml` owns maximum repair iterations, model or token spend,
+CI reruns, sandbox or infrastructure cost, elapsed workflow duration, retry
+backoff, external API attempts, and escalation thresholds. The reusable baseline
+permits three review/repair cycles, two CI reruns per unchanged commit, and three
+reconciled external-action attempts with bounded exponential backoff. Paid
+infrastructure, unbounded external API use, and production spend remain zero or
+disabled until project initialization provides explicit limits.
+
+Exhaustion enters `BLOCKED_TECHNICAL` when a different deterministic strategy
+remains possible, `BLOCKED_POLICY` when the requested work exceeds configured
+authority, or `HUMAN_DECISION_REQUIRED` when increasing a financial or resource
+limit requires irreducible authority. The engine records consumption and never
+resets a counter merely because an agent session restarts.
+
 ## Spec Kit Compatibility
 
 The lifecycle is:
@@ -463,9 +699,11 @@ Spec Kit stages feed the lifecycle state machine; they do not replace it.
 `scripts/validate-instructions.sh` verifies required files, the root line limit,
 YAML parsing, cross-control-plane references, required lifecycle language, local
 Markdown links, profile validity, non-overlapping risk thresholds, complete
-authority matrices, reachable lifecycle states, and mandatory autonomy,
-solo/regulated, and CI statements. Without Python or PyYAML, it performs reduced
-structural diagnostics and warns that policy execution is unavailable.
+authority matrices, deny-overrides precedence, trusted-policy self-governance,
+formal schemas, lifecycle paths and recovery, invalidation dependencies,
+resource bounds, and mandatory autonomy, solo/regulated, and CI statements.
+Without the Python runtime dependencies, it performs reduced structural
+diagnostics and warns that policy execution is unavailable.
 
 `scripts/validate-feature-context.sh <feature-directory>` verifies Spec Kit
 artifacts, the Instruction Context declaration, classifications, loaded modules,
@@ -473,8 +711,9 @@ risk and readiness levels, not-applicable rationales, clarification markers,
 and classification-specific module dependencies.
 
 `scripts/policy-engine.py` provides `classify`, `authorize`, `transition`,
-`check-exceptions`, and `validate-evidence` operations. Successful results are
-machine-readable and include control-plane hashes. Invalid or incomplete input
+`check-exceptions`, `compare-policy`, `validate-evidence`, `reconcile-action`,
+and `ingest-decision` operations. Successful results are machine-readable and
+include trusted and proposed control-plane hashes. Invalid or incomplete input
 fails closed with a mapped exceptional state and actionable errors.
 
 Validators use actionable `ERROR`, `WARNING`, and success messages and return a
@@ -484,10 +723,14 @@ non-zero status on failure. They do not modify the repository.
 
 - Run the instruction-system validator on the completed repository.
 - Check `CLAUDE.md` with `wc -l`.
-- Check both scripts with `bash -n`.
-- Unit-test policy scoring boundaries, automatic critical overrides,
-  contradictory facts, additive routes, authority matrices, exception expiry,
-  transition prerequisites, stale evidence, and escalation-packet completeness.
+- Run `bash -n scripts/validate-instructions.sh` and
+  `bash -n scripts/validate-feature-context.sh`.
+- Run `python3 -m py_compile scripts/policy-engine.py` and its unit tests.
+- Unit-test dimensional risk aggregation, group caps, subsumption, cross-domain
+  escalation, automatic critical overrides, fact provenance and corroboration,
+  contradictory facts, additive routes, deny-overrides authority, exception
+  expiry, transition prerequisites, selective invalidation, stale evidence,
+  resource exhaustion, and escalation-packet completeness.
 - Run table-driven end-to-end fixtures for low, moderate, high, and critical
   delivery scenarios.
 - Exercise feature-context validation against temporary valid and invalid
@@ -505,6 +748,13 @@ non-zero status on failure. They do not modify the repository.
   complete bounded decision packet.
 - Confirm prohibited outcomes cannot be converted into autonomous actions by an
   exception record.
+- Confirm trusted branch-base policy evaluates proposed instruction-system
+  changes and a proposal cannot authorize its own weakening.
+- Confirm repeated external-action requests reconcile state and do not create
+  duplicate side effects.
+- Confirm a human response cannot be replayed against changed evidence or
+  policy.
+- Confirm JSON Schemas reject malformed control-plane and evidence records.
 
 ## Git and Publication
 
@@ -523,3 +773,20 @@ and auditable decisions for classification, risk, authority, transitions,
 exceptions, and evidence. `CLAUDE.md` must remain no more than 350 lines, no fake
 feature directory may exist, no repository commands may be invented, and the
 final report must list placeholders and any deliberate deviations.
+
+The acceptance suite must also prove:
+
+1. A proposed policy weakening cannot authorize itself.
+2. Deny-overrides selects the most restrictive applicable result.
+3. An unconfigured repository cannot mutate remotes or production.
+4. Maintenance succeeds without an active feature.
+5. Correlated risk factors do not cause unintended tier inflation.
+6. Material false or unknown facts without required provenance fail closed.
+7. Changed inputs selectively invalidate prior decisions.
+8. Repeated external-action requests do not duplicate side effects.
+9. Human decisions cannot be replayed against changed context.
+10. Every normal state has a valid path to completion.
+11. Every exceptional state has deterministic remediation or escalation.
+12. Resource limits stop runaway autonomous loops.
+13. Policy-engine changes are evaluated by the trusted prior revision.
+14. Formal schemas reject malformed control-plane records.
