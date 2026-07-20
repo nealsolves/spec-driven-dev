@@ -214,8 +214,23 @@
         "resolution": {"type": "string", "minLength": 1},
         "source_ref": {"type": "string", "minLength": 1},
         "configured_default": {"type": ["string", "number", "boolean", "null"]},
-        "reversal_path": {"type": "string", "minLength": 1}
-      }
+        "reversal_path": {"type": "string", "minLength": 1},
+        "options": {
+          "type": "array",
+          "minItems": 2,
+          "items": {"$ref": "#/$defs/escalation_option"}
+        },
+        "recommended_option": {"type": "string", "minLength": 1}
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {"class": {"const": "material_business"}},
+            "required": ["class"]
+          },
+          "then": {"required": ["options", "recommended_option"]}
+        }
+      ]
     },
     "exception": {
       "type": "object",
@@ -240,7 +255,7 @@
       "required": ["source", "outcome"],
       "properties": {
         "source": {"enum": ["external_obligation", "constitution", "regulated_overlay", "project", "base_profile", "workflow"]},
-        "action": {"type": "string", "pattern": "^[a-z][a-z0-9_]*$"},
+        "action": {"$ref": "#/properties/action"},
         "outcome": {"enum": ["autonomous", "autonomous_with_enhanced_gates", "human_required", "prohibited"]},
         "rule": {"type": "string", "minLength": 1},
         "reason": {"type": "string", "minLength": 1}

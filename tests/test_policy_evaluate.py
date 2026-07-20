@@ -9,7 +9,7 @@ from pathlib import Path
 
 import yaml
 
-from tests.helpers import ROOT, load_engine
+from tests.helpers import ROOT, load_engine, temporary_repository
 
 
 ENGINE_PATH = ROOT / "scripts/policy-engine.py"
@@ -175,6 +175,42 @@ class PolicyEvaluationTest(unittest.TestCase):
         ):
             self.engine.evaluate(self.bundle, context)
 
+        context["facts"]["modifies_authorization"]["corroboration"][0][
+            "source_ref"
+        ] = "./tests/fixtures/evidence/authorization-diff.json"
+        with self.assertRaisesRegex(
+            self.engine.PolicyInputError, "modifies_authorization.*independent"
+        ):
+            self.engine.evaluate(self.bundle, context)
+
+        with temporary_repository() as root:
+            evidence_dir = root / "evidence"
+            evidence_dir.mkdir()
+            primary = evidence_dir / "authorization.json"
+            primary.write_text("{}\n")
+            (evidence_dir / "authorization-alias.json").symlink_to(primary)
+            bundle = self.engine.load_control_plane(root)
+            aliased = load_context("maintenance-low.yaml")
+            aliased["facts"] = {
+                "modifies_authorization": fact(
+                    False,
+                    "evidence/authorization.json",
+                    corroboration=[
+                        {
+                            "source_type": "path_analysis",
+                            "source_ref": "evidence/authorization-alias.json",
+                            "extractor": "repository-fact-extractor-v1",
+                            "confidence": 0.99,
+                            "observed_at_change": HASH_A,
+                        }
+                    ],
+                )
+            }
+            with self.assertRaisesRegex(
+                self.engine.PolicyInputError, "modifies_authorization.*independent"
+            ):
+                self.engine.evaluate(bundle, aliased)
+
         context["facts"]["modifies_authorization"]["corroboration"] = [
             {
                 "source_type": "path_analysis",
@@ -238,6 +274,41 @@ class PolicyEvaluationTest(unittest.TestCase):
                 "rule": "remote_actions_disabled",
             },
             result["authority"]["applicable"],
+        )
+
+    def test_unconfigured_lifecycle_prohibits_enabled_remote_and_production_actions(self):
+        remote_bundle = copy.deepcopy(self.bundle)
+        remote_bundle["project"]["remote_actions"].update(
+            {"enabled": True, "repository": "owner/repository", "push_branch": True}
+        )
+        push_context = load_context("maintenance-low.yaml")
+        push_context["action"] = "push_branch"
+
+        push_result = self.engine.evaluate(remote_bundle, push_context)
+
+        self.assertEqual(push_result["authority"]["outcome"], "prohibited")
+        self.assertTrue(
+            any(
+                item["rule"] == "unconfigured_remote_actions_disabled"
+                for item in push_result["authority"]["applicable"]
+            )
+        )
+
+        production_bundle = copy.deepcopy(self.bundle)
+        production_bundle["project"]["production_actions"].update(
+            {"enabled": True, "target": "production", "deploy": True}
+        )
+        deploy_context = load_context("maintenance-low.yaml")
+        deploy_context["action"] = "deploy_production"
+
+        deploy_result = self.engine.evaluate(production_bundle, deploy_context)
+
+        self.assertEqual(deploy_result["authority"]["outcome"], "prohibited")
+        self.assertTrue(
+            any(
+                item["rule"] == "unconfigured_production_actions_disabled"
+                for item in deploy_result["authority"]["applicable"]
+            )
         )
 
     def test_deny_overrides_selects_most_restrictive_outcome(self):
@@ -346,6 +417,19 @@ class PolicyEvaluationTest(unittest.TestCase):
                 "id": "CLAR-3",
                 "class": "material_business",
                 "question": "How long should customer documents be retained?",
+                "options": [
+                    {
+                        "id": "30-days",
+                        "label": "30 days",
+                        "consequence": "Lower privacy exposure with more user inconvenience.",
+                    },
+                    {
+                        "id": "90-days",
+                        "label": "90 days",
+                        "consequence": "Balanced retention and storage cost.",
+                    },
+                ],
+                "recommended_option": "90-days",
             },
         ]
 
@@ -360,8 +444,54 @@ class PolicyEvaluationTest(unittest.TestCase):
         self.assertEqual(packet["decision_id"], "DEC-maintenance-001-CLAR-3")
         self.assertEqual(packet["status"], "open")
         self.assertEqual(packet["hashes"], result["hashes"])
-        self.assertTrue(packet["options"])
+        self.assertEqual(packet["options"], context["clarifications"][2]["options"])
+        self.assertEqual(packet["recommended_option"], "90-days")
         self.assertTrue(packet["required_response"])
+
+    def test_material_clarification_requires_actionable_unique_options(self):
+        base = load_context("maintenance-low.yaml")
+        material = {
+            "id": "CLAR-MATERIAL",
+            "class": "material_business",
+            "question": "Choose a retention period.",
+            "options": [
+                {"id": "30-days", "consequence": "Lower privacy exposure."},
+                {"id": "90-days", "consequence": "Higher storage cost."},
+            ],
+            "recommended_option": "90-days",
+        }
+
+        missing = copy.deepcopy(base)
+        missing["clarifications"] = [
+            {
+                "id": "CLAR-MISSING",
+                "class": "material_business",
+                "question": "Choose a retention period.",
+            }
+        ]
+        with self.assertRaisesRegex(
+            self.engine.PolicyInputError, "'options' is a required property"
+        ):
+            self.engine.evaluate(self.bundle, missing)
+
+        duplicate = copy.deepcopy(base)
+        duplicate_material = copy.deepcopy(material)
+        duplicate_material["options"][1]["id"] = "30-days"
+        duplicate["clarifications"] = [duplicate_material]
+        with self.assertRaisesRegex(
+            self.engine.PolicyInputError, "option IDs must be unique"
+        ):
+            self.engine.evaluate(self.bundle, duplicate)
+
+        invalid_recommendation = copy.deepcopy(base)
+        invalid_material = copy.deepcopy(material)
+        invalid_material["recommended_option"] = "indefinite"
+        invalid_recommendation["clarifications"] = [invalid_material]
+        with self.assertRaisesRegex(
+            self.engine.PolicyInputError,
+            "recommended_option.*does not name a supplied option",
+        ):
+            self.engine.evaluate(self.bundle, invalid_recommendation)
 
     def test_resource_limit_exhaustion_requires_human_authority(self):
         context = load_context("maintenance-low.yaml")
@@ -425,6 +555,127 @@ class PolicyEvaluationTest(unittest.TestCase):
             changed_policy["hashes"]["policy_hash"],
         )
         self.assertEqual(baseline["hashes"]["change_hash"], HASH_A)
+
+    def test_context_hash_normalizes_embedded_evidence_hashes_only(self):
+        context = load_context("maintenance-low.yaml")
+        context["evidence"] = {
+            "review_passed": {
+                "satisfied": True,
+                "source_ref": "tests/fixtures/evidence/docs-diff.json",
+                "hashes": {
+                    "policy_hash": "1" * 64,
+                    "context_hash": "2" * 64,
+                    "change_hash": HASH_A,
+                },
+            }
+        }
+        baseline = self.engine.evaluate(self.bundle, context)
+
+        fixed_point = copy.deepcopy(context)
+        fixed_point["evidence"]["review_passed"]["hashes"] = baseline["hashes"]
+        fixed_point_result = self.engine.evaluate(self.bundle, fixed_point)
+        self.assertEqual(
+            baseline["hashes"]["context_hash"],
+            fixed_point_result["hashes"]["context_hash"],
+        )
+
+        replaced_hashes = copy.deepcopy(context)
+        replaced_hashes["evidence"]["review_passed"]["hashes"] = {
+            "policy_hash": "3" * 64,
+            "context_hash": "4" * 64,
+            "change_hash": "5" * 64,
+        }
+        replaced = self.engine.evaluate(self.bundle, replaced_hashes)
+        self.assertEqual(
+            baseline["hashes"]["context_hash"], replaced["hashes"]["context_hash"]
+        )
+
+        changed_satisfaction = copy.deepcopy(context)
+        changed_satisfaction["evidence"]["review_passed"]["satisfied"] = False
+        satisfaction_result = self.engine.evaluate(
+            self.bundle, changed_satisfaction
+        )
+        self.assertNotEqual(
+            baseline["hashes"]["context_hash"],
+            satisfaction_result["hashes"]["context_hash"],
+        )
+
+        changed_source = copy.deepcopy(context)
+        changed_source["evidence"]["review_passed"][
+            "source_ref"
+        ] = "tests/fixtures/evidence/schema-diff.json"
+        source_result = self.engine.evaluate(self.bundle, changed_source)
+        self.assertNotEqual(
+            baseline["hashes"]["context_hash"],
+            source_result["hashes"]["context_hash"],
+        )
+
+    def test_lifecycle_evidence_references_must_exist_inside_repository(self):
+        context = load_context("maintenance-low.yaml")
+        template = {
+            "satisfied": True,
+            "source_ref": "tests/fixtures/evidence/docs-diff.json",
+            "hashes": {
+                "policy_hash": "1" * 64,
+                "context_hash": "2" * 64,
+                "change_hash": HASH_A,
+            },
+        }
+        for source_ref in ("tests/fixtures/evidence/missing.json", "../outside.json"):
+            with self.subTest(source_ref=source_ref):
+                evidence = copy.deepcopy(template)
+                evidence["source_ref"] = source_ref
+                context["evidence"] = {"review_passed": evidence}
+
+                with self.assertRaises(self.engine.PolicyInputError):
+                    self.engine.evaluate(self.bundle, context)
+
+    def test_constitutional_orders_are_schema_fixed_for_validation_and_evaluation(self):
+        for section, key in (("risk", "tiers"), ("authority", "outcomes")):
+            with self.subTest(validation=f"{section}.{key}"):
+                with temporary_repository() as root:
+                    policy_path = root / ".claude/policy.yaml"
+                    policy = yaml.safe_load(policy_path.read_text())
+                    policy[section][key].reverse()
+                    policy_path.write_text(yaml.safe_dump(policy, sort_keys=False))
+
+                    errors = self.engine.validate_bundle(root, None)
+
+                self.assertTrue(
+                    any(f"policy.{section}.{key}" in error for error in errors),
+                    errors,
+                )
+
+        for key in ("tiers", "outcomes"):
+            with self.subTest(key=key):
+                bundle = copy.deepcopy(self.bundle)
+                if key == "tiers":
+                    bundle["policy"]["risk"][key].reverse()
+                else:
+                    bundle["policy"]["authority"][key].reverse()
+                with self.assertRaisesRegex(
+                    self.engine.PolicyInputError,
+                    f"policy.(risk|authority).{key}",
+                ):
+                    self.engine.evaluate(
+                        bundle, load_context("maintenance-low.yaml")
+                    )
+
+    def test_authority_constraint_action_uses_declared_action_vocabulary(self):
+        context = load_context("maintenance-low.yaml")
+        context["authority_constraints"] = [
+            {
+                "source": "external_obligation",
+                "action": "pus_branch",
+                "outcome": "prohibited",
+                "rule": "typo-must-not-be-ignored",
+            }
+        ]
+
+        with self.assertRaisesRegex(
+            self.engine.PolicyInputError, r"authority_constraints\[0\].action"
+        ):
+            self.engine.evaluate(self.bundle, context)
 
     def test_evaluate_cli_stdout_output_file_and_input_error_contracts(self):
         command = [

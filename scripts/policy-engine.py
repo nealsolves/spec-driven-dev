@@ -33,6 +33,13 @@ SCHEMA_FILES = {
     "context": ".claude/schemas/context.schema.json",
 }
 
+RISK_TIERS = ("low", "moderate", "high", "critical")
+AUTHORITY_OUTCOMES = (
+    "autonomous",
+    "autonomous_with_enhanced_gates",
+    "human_required",
+    "prohibited",
+)
 MAX_SCHEMA_NODES = 100_000
 MAX_SCHEMA_DEPTH = 512
 INVALID_POINTER_ESCAPE = re.compile(r"~(?:[^01]|$)")
@@ -756,7 +763,7 @@ def _validated_fact_values(
                 f"context.facts.{fact_name}: stale evidence; observed_at_change "
                 "does not match change_hash"
             )
-        _resolve_evidence_reference(
+        primary_path = _resolve_evidence_reference(
             root, record["source_ref"], f"context.facts.{fact_name}"
         )
         corroboration = record["corroboration"]
@@ -767,12 +774,12 @@ def _validated_fact_values(
                     f"context.facts.{fact_name}.corroboration[{index}]: stale "
                     "evidence; observed_at_change does not match change_hash"
                 )
-            _resolve_evidence_reference(
+            corroboration_path = _resolve_evidence_reference(
                 root,
                 source["source_ref"],
                 f"context.facts.{fact_name}.corroboration[{index}]",
             )
-            if source["source_ref"] != record["source_ref"]:
+            if corroboration_path != primary_path:
                 independent_corroboration = True
 
         definition = catalog[fact_name]
@@ -797,6 +804,18 @@ def _validated_fact_values(
             f"{conflicting}"
         )
     return values
+
+
+def _validate_lifecycle_evidence(
+    bundle: dict[str, Any], context: dict[str, Any]
+) -> None:
+    root = Path(bundle["root"])
+    for evidence_name, evidence in context["evidence"].items():
+        _resolve_evidence_reference(
+            root,
+            evidence["source_ref"],
+            f"context.evidence.{evidence_name}",
+        )
 
 
 def _append_unique(target: list[str], values: Iterable[str]) -> None:
@@ -830,7 +849,7 @@ def _evaluate_risk(
     bundle: dict[str, Any], fact_values: dict[str, Any]
 ) -> dict[str, Any]:
     risk_policy = bundle["policy"]["risk"]
-    tiers = risk_policy["tiers"]
+    tiers = RISK_TIERS
     tier_index = {tier: index for index, tier in enumerate(tiers)}
     inherent: list[dict[str, str]] = []
     current_index = 0
@@ -888,6 +907,11 @@ def _context_hash(context: dict[str, Any]) -> str:
         "responses",
     ):
         hash_input.pop(generated_key, None)
+    evidence = hash_input.get("evidence")
+    if isinstance(evidence, dict):
+        for record in evidence.values():
+            if isinstance(record, dict):
+                record.pop("hashes", None)
     return canonical_hash(hash_input)
 
 
@@ -972,6 +996,18 @@ def _material_escalation_packet(
     hashes: dict[str, str]
 ) -> dict[str, Any]:
     clarification_id = clarification.get("id", f"clarification-{index + 1}")
+    options = copy.deepcopy(clarification["options"])
+    option_ids = [option["id"] for option in options]
+    if len(set(option_ids)) != len(option_ids):
+        raise PolicyInputError(
+            f"clarification {clarification_id}: option IDs must be unique"
+        )
+    recommended = clarification["recommended_option"]
+    if recommended not in option_ids:
+        raise PolicyInputError(
+            f"clarification {clarification_id}: recommended_option {recommended!r} "
+            "does not name a supplied option"
+        )
     evidence = [record["source_ref"] for record in context["facts"].values()]
     return {
         "decision_id": f"DEC-{context['change_id']}-{clarification_id}",
@@ -982,14 +1018,8 @@ def _material_escalation_packet(
         "policy_trigger": "clarifications.material_business",
         "reason": "No deterministic repository evidence or bounded default can resolve this material business decision.",
         "evidence_collected": list(dict.fromkeys(evidence)),
-        "options": [
-            {
-                "id": "provide_authoritative_decision",
-                "label": "Provide authoritative decision",
-                "consequence": "The response is incorporated and the blocked decision is reevaluated against current hashes.",
-            }
-        ],
-        "recommended_option": "provide_authoritative_decision",
+        "options": options,
+        "recommended_option": recommended,
         "required_response": [
             "decision_id",
             "selected_option",
@@ -1089,8 +1119,17 @@ def _project_authority_outcomes(
         "merge_pull_request",
         "create_release",
     }
+    unconfigured = project["project"]["lifecycle"] == "unconfigured"
     if action in remote_actions:
         remote = project["remote_actions"]
+        if unconfigured:
+            outcomes.append(
+                {
+                    "source": "project",
+                    "outcome": "prohibited",
+                    "rule": "unconfigured_remote_actions_disabled",
+                }
+            )
         if not remote["enabled"] or not remote[action]:
             outcomes.append(
                 {
@@ -1101,6 +1140,14 @@ def _project_authority_outcomes(
             )
     if action == "deploy_production":
         production = project["production_actions"]
+        if unconfigured:
+            outcomes.append(
+                {
+                    "source": "project",
+                    "outcome": "prohibited",
+                    "rule": "unconfigured_production_actions_disabled",
+                }
+            )
         if not production["enabled"] or not production["deploy"]:
             outcomes.append(
                 {
@@ -1109,7 +1156,7 @@ def _project_authority_outcomes(
                     "rule": "production_actions_disabled",
                 }
             )
-    if action == "risk_exception" and project["project"]["lifecycle"] == "unconfigured":
+    if action == "risk_exception" and unconfigured:
         outcomes.append(
             {
                 "source": "project",
@@ -1117,7 +1164,7 @@ def _project_authority_outcomes(
                 "rule": "unconfigured_risk_exceptions_disabled",
             }
         )
-    elif context["exceptions"] and project["project"]["lifecycle"] == "unconfigured":
+    elif context["exceptions"] and unconfigured:
         outcomes.append(
             {
                 "source": "project",
@@ -1184,7 +1231,7 @@ def _evaluate_authority(
             }
         )
 
-    outcomes = authority_policy["outcomes"]
+    outcomes = AUTHORITY_OUTCOMES
     outcome_rank = {outcome: index for index, outcome in enumerate(outcomes)}
     precedence = authority_policy["source_precedence"]
     source_rank = {
@@ -1214,6 +1261,7 @@ def evaluate(
         _raise_evaluation_errors(_evaluation_configuration_errors(bundle))
         _raise_evaluation_errors(_context_value_errors(bundle, context))
         fact_values = _validated_fact_values(bundle, context)
+        _validate_lifecycle_evidence(bundle, context)
         classifications, modules, workflows = _evaluate_routing(
             bundle, context, fact_values
         )

@@ -16,7 +16,13 @@
           "type": "array",
           "minItems": 4,
           "maxItems": 4,
-          "items": {"$ref": "#/$defs/tier"},
+          "prefixItems": [
+            {"const": "low"},
+            {"const": "moderate"},
+            {"const": "high"},
+            {"const": "critical"}
+          ],
+          "items": false,
           "uniqueItems": true
         },
         "factors": {
@@ -47,7 +53,13 @@
           "type": "array",
           "minItems": 4,
           "maxItems": 4,
-          "items": {"$ref": "#/$defs/outcome"},
+          "prefixItems": [
+            {"const": "autonomous"},
+            {"const": "autonomous_with_enhanced_gates"},
+            {"const": "human_required"},
+            {"const": "prohibited"}
+          ],
+          "items": false,
           "uniqueItems": true
         },
         "source_precedence": {
