@@ -2,10 +2,10 @@
 
 ## Status
 
-The architecture is approved in principle. This revision defines a practical
-Version 1 (MVP) and explicitly defers operational orchestration and advanced
-assurance until real-project experience justifies them. It is pending final
-written-spec approval before implementation planning.
+The architecture and phased boundary are approved for MVP implementation. This
+revision defines a practical Version 1 and explicitly defers operational
+orchestration and advanced assurance until real-project experience justifies
+them.
 
 ## Operating Doctrine
 
@@ -180,7 +180,7 @@ Version 1 uses four YAML files:
 overlays, data posture, known repository commands, escalation owner, financial
 limits, and remote/production permissions.
 
-`routing.yaml` contains fact definitions, workflow-family rules,
+`routing.yaml` contains fact definitions, workflow-family rules, fact and action
 classification rules, and additive classification-to-module mappings.
 
 `policy.yaml` contains the risk model, authority matrix, exception rules,
@@ -291,6 +291,12 @@ Until initialization passes, local specification, design, implementation,
 testing, and review are allowed. Push, merge, release, deployment, and autonomous
 risk exceptions are prohibited.
 
+Changing lifecycle to `configured` fails unless project and repository identity,
+owner and escalation owner, repository targets, and data posture are resolved.
+Child permissions cannot be true while their parent switch is false. Enabled
+production authority additionally requires a concrete configured target and
+rollback permission. Validation and evaluation apply the same semantic gate.
+
 `workflows/project-initialization.md` derives or collects project identity,
 repository, lifecycle, environments, known install/test/lint/typecheck/build
 commands, data classes, base authority, financial limits, production
@@ -325,6 +331,10 @@ reads_customer_data -> data_sensitive
 uses_llm -> ai_system_change
 deploys_to_production -> production_impact + observability_impact + release
 ```
+
+Action routes apply the same controls when release, production deployment, or
+instruction-system authority is requested even if extracted facts are sparse.
+They are additive and do not weaken contradiction checks on the facts.
 
 Unknown fact names, stale evidence, invalid types, inadequate required
 corroboration, and contradictory facts fail validation.
@@ -538,6 +548,13 @@ the open packet and hashes, records the response, incorporates stated
 conditions, and reevaluates the blocked decision. It does not blindly resume or
 accept a response against changed context.
 
+Every final `human_required` result has exactly one bounded packet. Material
+clarifications retain their business options; other authority gates offer a
+single-use authorization scoped to the exact action, triggering rules, policy,
+context, and change hashes. The recorded approval can suppress only those exact
+`human_required` rules, applies enhanced gates, and cannot suppress a
+`prohibited` result. Identity federation and signatures remain Phase 2.
+
 ## Validation
 
 `scripts/validate-instructions.sh` is the primary validator. It calls
@@ -572,12 +589,13 @@ wc -l CLAUDE.md
 7. Simple risk factors, modifiers, and critical overrides produce expected
    table-driven outcomes.
 8. Deny-overrides selects the most restrictive authority result.
-9. An unconfigured repository cannot authorize remote or production actions.
+9. An unconfigured repository cannot authorize remote or production actions,
+   and an incompletely configured repository cannot activate them.
 10. Feature and maintenance workflows both reach valid terminal states.
 11. Clarifications resolve, default, or escalate according to policy.
-12. Repair and CI retry limits stop runaway loops.
-13. Escalation packets are complete and responses cannot replay against changed
-    hashes.
+12. Repair, CI retry, and elapsed-time limits stop runaway loops.
+13. Material and generic authority escalation packets are complete, scoped, and
+    responses cannot replay against changed hashes or override prohibition.
 14. Policy, context, and change hashes invalidate the documented evidence.
 15. Post-bootstrap instruction-system changes require human authority in MVP.
 16. Required validation commands pass, and negative fixtures fail actionably.

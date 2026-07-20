@@ -10,6 +10,7 @@
 |---|---|
 | Active change | `001-modular-instruction-system` |
 | Active branch | `feat/001-modular-instruction-system` |
+| Verified feature branch | `feat/001-modular-instruction-system`; verified commit is this ledger's branch `HEAD` and its exact hash is recorded in the Task 9 report |
 | Active profile | Base profile `solo`; project lifecycle `unconfigured` |
 | Instruction modules | Installation `complete` |
 | Project owner | `<name>` unresolved |
@@ -24,7 +25,7 @@
 | Project initialization | not started | The reusable template intentionally remains unconfigured; resolve identity, commands, environments, owners, data posture, and authority before instantiation. |
 | Specification and plan | in review | Approved phased design and MVP implementation plan are present under `docs/superpowers/`. |
 | Implementation | in review | Compact kernel, four control files, four schemas, modular guidance, four-command engine, and validators are present on the active branch. |
-| Validation | in review | Repository validator passed; 135 unit tests passed; root kernel is 230 lines; `git diff --check` passed. |
+| Validation | in review | Repository validator passed; 149 unit tests passed; root kernel is 230 lines; `git diff --check` passed. |
 | Review and convergence | in review | Task-level reviews are complete; final broad review is the current gate. |
 | Pull request and merge | not started | No pull request or merge is recorded. Publication requires an explicit authorized action after final review. |
 | Release and deployment | deferred | No release or deployment was created. External release/deployment execution is Phase 2. |
@@ -38,11 +39,11 @@ Verified on 2026-07-20 in the active worktree:
 | `bash -n scripts/validate-instructions.sh` | PASS (exit 0) |
 | `bash -n scripts/validate-feature-context.sh` | PASS (exit 0) |
 | `.venv/bin/python -m py_compile scripts/policy-engine.py` | PASS (exit 0) |
-| `.venv/bin/python -m unittest discover -s tests -p 'test_*.py' -v` | PASS: 135 tests, 0 failures, 0 errors |
+| `.venv/bin/python -m unittest discover -s tests -p 'test_*.py'` | PASS: 149 tests, 0 failures, 0 errors |
 | `bash scripts/validate-instructions.sh` | PASS: repository-only validation; no live context supplied |
 | `wc -l CLAUDE.md` | PASS: 230 lines (maximum 350) |
 | `git diff --check` | PASS: no whitespace errors |
-| Focused negative acceptance suite | PASS: 15 mapped negative tests |
+| Focused correction suite | PASS: 16 targeted regression tests, including configured-project, generic-authority, routing, precedence, resource, version, status, and malformed-input cases |
 
 ## Risks
 
@@ -68,11 +69,12 @@ Verified on 2026-07-20 in the active worktree:
 
 | Field | Current value |
 |---|---|
-| Last verified main commit | Local `main`: `23c568a264eddd22883b5ae5233f7d970d62bbb9` |
-| Last verified origin/main commit | Local tracking ref `origin/main`: `324ebe61dc5350ad8d2ad6a2a70b8087feb68eb3`; no fetch performed in this task |
+| Last verified main commit | `none` in this task; unverified local baseline reference `main` was `23c568a264eddd22883b5ae5233f7d970d62bbb9` |
+| Last verified origin/main commit | `none` in this task; unverified local baseline reference `origin/main` was `324ebe61dc5350ad8d2ad6a2a70b8087feb68eb3`; no fetch performed |
+| Last verified feature commit | Branch `HEAD` containing this ledger on `feat/001-modular-instruction-system`; exact immutable hash is recorded in `.superpowers/sdd/task-9-report.md` |
 | Last deployment | `none` |
 | Last policy validation | 2026-07-20: repository-only validator PASS |
-| Last full test result | 2026-07-20: 135 tests PASS, 0 failures, 0 errors |
+| Last full test result | 2026-07-20: 149 tests PASS, 0 failures, 0 errors |
 
 ## Status Vocabulary
 

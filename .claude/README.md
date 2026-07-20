@@ -41,7 +41,7 @@ plan; completed installations must contain every configured module path.
 | File | Responsibility |
 |---|---|
 | [`project.yaml`](project.yaml) | Identity, lifecycle, ownership, environments, data posture, project commands, overlays, financial limits, and remote/production permissions. |
-| [`routing.yaml`](routing.yaml) | Observable fact catalog, deterministic base/overlay profile paths, workflow selection, classifications, always-on rules, and additive module routes. |
+| [`routing.yaml`](routing.yaml) | Observable fact catalog, deterministic base/overlay profile paths, workflow selection, fact and action classifications, always-on rules, and additive module routes. |
 | [`policy.yaml`](policy.yaml) | Simple risk tiers, deny-overrides authority, clarifications, exceptions, reviews, and bounded resource limits. |
 | [`lifecycle.yaml`](lifecycle.yaml) | Normal and exceptional states, allowed transitions, evidence prerequisites, recoveries, and terminal paths. |
 
@@ -79,12 +79,14 @@ The CLI has exactly four operations:
 - `policy-engine.py validate` checks schemas, cross-references, lifecycle
   reachability, module paths when installation is complete, and an optional
   context.
-- `policy-engine.py evaluate` derives classifications, risk, routed modules,
+- `policy-engine.py evaluate` derives fact- and action-based classifications, risk, routed modules,
   clarifications, exceptions, resource status, authority, and three hashes.
 - `policy-engine.py transition` checks a declared state edge, active path,
   evidence, current authority, and hash freshness without mutating source files.
 - `policy-engine.py respond` validates a bounded human response, incorporates
-  its declared conditions, and reevaluates the blocked decision.
+  its declared conditions, and reevaluates the blocked decision. Generic
+  authority approvals are single-use records scoped to the packet's exact
+  action, rules, and three hashes; they cannot override `prohibited`.
 
 PyYAML and `jsonschema` versions are bounded in
 [`../requirements-policy.txt`](../requirements-policy.txt). A missing dependency
@@ -102,6 +104,13 @@ repository, lifecycle, environments, install/test/lint/typecheck/build/release
 commands, data classes, authority, financial limits, overlays, deployment and
 rollback mechanisms, Spec Kit version, escalation owner, and external
 obligations. Preserve any unresolved value as `unknown`.
+
+Changing lifecycle to `configured` is accepted only after permission-bearing
+identity, ownership, repository targets, and data posture are concrete. Parent
+authority switches must agree with child permissions; production authority also
+requires a configured target environment and rollback permission. Incomplete
+configured profiles fail validation and evaluation rather than inheriting an
+autonomous action-matrix result.
 
 Until initialization validates, policy prohibits push, merge, release,
 deployment, and autonomous risk exceptions. Local specification, implementation,

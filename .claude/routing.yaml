@@ -59,6 +59,10 @@ classification_rules:
   - {fact: instruction_system_change, equals: true, add: [instruction_system_change]}
 overlay_rules:
   - {overlay: regulated, add: [regulated_scope]}
+action_routes:
+  create_release: [release]
+  deploy_production: [production_impact, observability_impact, release]
+  instruction_system_change: [instruction_system_change]
 routes:
   documentation_only: {workflows: [workflows/maintenance.md], rules: []}
   feature: {workflows: [workflows/feature-development.md], rules: [rules/architecture.md]}

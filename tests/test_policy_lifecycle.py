@@ -77,6 +77,36 @@ class PolicyLifecycleTest(unittest.TestCase):
         self.assertEqual(context["open_escalation"]["hashes"], current["hashes"])
         return current
 
+    def open_authority_escalation(self):
+        context, _ = self.context_with_evidence(
+            state="REVIEWING",
+            workflow="maintenance",
+            required=["required_reviews_passed", "required_ci_passed"],
+        )
+        context["resources"]["repair_attempts"] = 3
+        for _ in range(2):
+            decision = self.fresh_decision(self.bundle, context)
+            self.assertEqual(decision["authority"]["outcome"], "human_required")
+            self.assertEqual(len(decision["escalations"]), 1)
+            context["current_state"] = "HUMAN_DECISION_REQUIRED"
+            context["open_escalation"] = copy.deepcopy(decision["escalations"][0])
+        current = self.fresh_decision(self.bundle, context)
+        context["open_escalation"] = copy.deepcopy(current["escalations"][0])
+        current = self.fresh_decision(self.bundle, context)
+        self.assertEqual(context["open_escalation"], current["escalations"][0])
+        response = {
+            "decision_id": context["open_escalation"]["decision_id"],
+            "selected_option": "authorize_once",
+            "decided_by": "owner@example.com",
+            "authority_basis": "repository_owner",
+            "timestamp": "2026-07-20T12:00:00Z",
+            "hashes": copy.deepcopy(current["hashes"]),
+            "conditions": copy.deepcopy(
+                context["open_escalation"]["options"][0].get("conditions", [])
+            ),
+        }
+        return context, response, current
+
     def test_valid_maintenance_completion_returns_new_decision_without_mutation(self):
         context, decision = self.context_with_evidence(
             state="REVIEWING",
@@ -178,9 +208,31 @@ class PolicyLifecycleTest(unittest.TestCase):
                 bundle = self.bundle
                 if path_name == "deployment":
                     bundle = copy.deepcopy(self.bundle)
-                    bundle["project"]["project"]["lifecycle"] = "configured"
+                    bundle["project"]["project"].update(
+                        {
+                            "name": "delivery-template",
+                            "repository": "owner/repository",
+                            "lifecycle": "configured",
+                        }
+                    )
+                    bundle["project"]["delivery"].update(
+                        {
+                            "owner": "owner@example.com",
+                            "escalation_owner": "owner@example.com",
+                        }
+                    )
+                    bundle["project"]["data"].update(
+                        {"classifications": ["internal"], "regulated_data": "none"}
+                    )
+                    bundle["project"]["environments"]["configured"] = ["production"]
+                    bundle["project"]["remote_actions"]["repository"] = "owner/repository"
                     bundle["project"]["production_actions"].update(
-                        {"enabled": True, "target": "production", "deploy": True}
+                        {
+                            "enabled": True,
+                            "target": "production",
+                            "deploy": True,
+                            "rollback": True,
+                        }
                     )
                 context, decision = self.context_with_evidence(
                     state=state,
@@ -382,6 +434,46 @@ class PolicyLifecycleTest(unittest.TestCase):
         self.assertNotEqual(result["decision"]["hashes"], current["hashes"])
         self.assertEqual(context, original_context)
         self.assertEqual(response, original_response)
+
+    def test_generic_authority_response_is_scoped_fresh_and_allows_transition(self):
+        context, response, _ = self.open_authority_escalation()
+
+        result = self.engine.respond(self.bundle, context, response)
+
+        updated = result["context"]
+        self.assertEqual(updated["current_state"], "REVIEWING")
+        self.assertEqual(updated["open_escalation"]["status"], "resolved")
+        self.assertEqual(result["decision"]["escalations"], [])
+        self.assertEqual(
+            result["decision"]["authority"]["outcome"],
+            "autonomous_with_enhanced_gates",
+        )
+        approvals = [
+            item for item in updated["authority_constraints"] if "approval" in item
+        ]
+        self.assertEqual(len(approvals), 1)
+        self.assertEqual(
+            approvals[0]["approval"]["decision_id"], response["decision_id"]
+        )
+
+        with self.assertRaisesRegex(
+            self.engine.PolicyInputError, "HUMAN_DECISION_REQUIRED"
+        ):
+            self.engine.respond(self.bundle, updated, response)
+
+        stale_scope = copy.deepcopy(updated)
+        stale_scope["resources"]["ci_reruns"] = 1
+        reevaluated = self.engine.evaluate(self.bundle, stale_scope)
+        self.assertEqual(reevaluated["authority"]["outcome"], "human_required")
+        self.assertEqual(len(reevaluated["escalations"]), 1)
+
+        for evidence in updated["evidence"].values():
+            evidence["hashes"] = copy.deepcopy(result["decision"]["hashes"])
+        fresh = self.engine.evaluate(self.bundle, updated)
+        transitioned = self.engine.transition(
+            self.bundle, updated, fresh, "COMPLETE"
+        )
+        self.assertEqual(transitioned["current_state"], "COMPLETE")
 
     def test_idless_material_clarification_round_trips_with_fallback_id(self):
         context = load_yaml("escalation-open.yaml")

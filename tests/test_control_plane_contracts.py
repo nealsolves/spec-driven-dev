@@ -148,6 +148,60 @@ class ControlPlaneContractsTest(unittest.TestCase):
             },
         )
 
+    def test_routing_declares_action_derived_routes(self):
+        routing = load_control_file("routing")
+
+        self.assertEqual(
+            routing["action_routes"],
+            {
+                "create_release": ["release"],
+                "deploy_production": [
+                    "production_impact",
+                    "observability_impact",
+                    "release",
+                ],
+                "instruction_system_change": ["instruction_system_change"],
+            },
+        )
+
+    def test_source_precedence_is_the_exact_constitutional_order(self):
+        policy = load_control_file("policy")
+        validator = jsonschema.Draft202012Validator(load_schema("policy"))
+
+        expected = [
+            "external_obligation",
+            "constitution",
+            "regulated_overlay",
+            "project",
+            "base_profile",
+            "workflow",
+        ]
+        self.assertEqual(policy["authority"]["source_precedence"], expected)
+        for invalid in (
+            list(reversed(expected)),
+            expected[:-1],
+            expected[:-1] + ["project"],
+            expected[:-1] + ["unknown_source"],
+        ):
+            with self.subTest(invalid=invalid):
+                changed = load_control_file("policy")
+                changed["authority"]["source_precedence"] = invalid
+                with self.assertRaises(jsonschema.ValidationError):
+                    validator.validate(changed)
+
+    def test_control_plane_version_can_increment_but_stays_positive_integer(self):
+        validator = jsonschema.Draft202012Validator(load_schema("project"))
+        project = load_control_file("project")
+        project["control_plane_version"] = 2
+        validator.validate(project)
+
+        for invalid in (0, -1, 1.5, "2"):
+            with self.subTest(invalid=invalid):
+                changed = load_control_file("project")
+                changed["control_plane_version"] = invalid
+                with self.assertRaises(jsonschema.ValidationError):
+                    validator.validate(changed)
+
     def test_profile_paths_reject_unknown_keys_and_nonprofile_paths(self):
         schema = load_schema("routing")
         validator = jsonschema.Draft202012Validator(schema)

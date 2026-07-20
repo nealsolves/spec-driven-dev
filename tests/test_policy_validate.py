@@ -59,6 +59,112 @@ class PolicyValidationTest(unittest.TestCase):
                 errors,
             )
 
+    def test_disabled_parent_rejects_enabled_child_permissions(self):
+        cases = (
+            ("remote_actions", "push_branch"),
+            ("production_actions", "rollback"),
+        )
+        for section, child in cases:
+            with self.subTest(section=section, child=child), temporary_repository() as root:
+                project_path = root / ".claude/project.yaml"
+                project = yaml.safe_load(project_path.read_text())
+                project["project"]["lifecycle"] = "configured"
+                project[section]["enabled"] = False
+                project[section][child] = True
+                project_path.write_text(yaml.safe_dump(project, sort_keys=False))
+
+                errors = self.engine.validate_bundle(root, None)
+
+            self.assertTrue(
+                any(section in error and child in error and "enabled: false" in error for error in errors),
+                errors,
+            )
+
+    def test_configured_remote_authority_requires_resolved_project_identity(self):
+        with temporary_repository() as root:
+            project_path = root / ".claude/project.yaml"
+            project = yaml.safe_load(project_path.read_text())
+            project["project"].update(
+                {"name": "delivery-template", "repository": "owner/repository", "lifecycle": "configured"}
+            )
+            project["delivery"].update(
+                {"owner": "owner@example.com", "escalation_owner": "owner@example.com"}
+            )
+            project["data"].update(
+                {"classifications": ["internal"], "regulated_data": "none"}
+            )
+            project["remote_actions"].update(
+                {"enabled": True, "repository": "unknown", "push_branch": True}
+            )
+            project_path.write_text(yaml.safe_dump(project, sort_keys=False))
+
+            errors = self.engine.validate_bundle(root, None)
+
+        self.assertTrue(
+            any("remote_actions.repository" in error and "resolved" in error for error in errors),
+            errors,
+        )
+
+    def test_configured_project_rejects_identity_owner_and_data_placeholders(self):
+        with temporary_repository() as root:
+            project_path = root / ".claude/project.yaml"
+            project = yaml.safe_load(project_path.read_text())
+            project["project"]["lifecycle"] = "configured"
+            project_path.write_text(yaml.safe_dump(project, sort_keys=False))
+
+            errors = self.engine.validate_bundle(root, None)
+
+        for field in (
+            "project.project.name",
+            "project.project.repository",
+            "project.delivery.owner",
+            "project.delivery.escalation_owner",
+            "project.remote_actions.repository",
+            "project.data.regulated_data",
+            "project.data.classifications",
+        ):
+            with self.subTest(field=field):
+                self.assertTrue(any(field in error for error in errors), errors)
+
+    def test_malformed_configured_nested_sections_fail_without_exception(self):
+        with temporary_repository() as root:
+            project_path = root / ".claude/project.yaml"
+            project = yaml.safe_load(project_path.read_text())
+            project["project"]["lifecycle"] = "configured"
+            project["delivery"] = []
+            project_path.write_text(yaml.safe_dump(project, sort_keys=False))
+
+            errors = self.engine.validate_bundle(root, None)
+
+        self.assertTrue(errors)
+        self.assertTrue(all(error.startswith("ERROR:") for error in errors), errors)
+        self.assertTrue(any("project.delivery" in error for error in errors), errors)
+
+    def test_configured_production_authority_requires_target_environment_and_rollback(self):
+        with temporary_repository() as root:
+            project_path = root / ".claude/project.yaml"
+            project = yaml.safe_load(project_path.read_text())
+            project["project"].update(
+                {"name": "delivery-template", "repository": "owner/repository", "lifecycle": "configured"}
+            )
+            project["delivery"].update(
+                {"owner": "owner@example.com", "escalation_owner": "owner@example.com"}
+            )
+            project["data"].update(
+                {"classifications": ["internal"], "regulated_data": "none"}
+            )
+            project["remote_actions"]["repository"] = "owner/repository"
+            project["production_actions"].update(
+                {"enabled": True, "target": "unknown", "deploy": True, "rollback": False}
+            )
+            project_path.write_text(yaml.safe_dump(project, sort_keys=False))
+
+            errors = self.engine.validate_bundle(root, None)
+
+        self.assertTrue(any("production_actions.target" in error for error in errors), errors)
+        self.assertTrue(any("production_actions.rollback" in error for error in errors), errors)
+        self.assertTrue(any("environments.configured" in error for error in errors), errors)
+
     def test_unknown_top_level_control_key_fails_actionably(self):
         with temporary_repository() as root:
             project_path = root / ".claude/project.yaml"
@@ -112,6 +218,22 @@ class PolicyValidationTest(unittest.TestCase):
             "ERROR: routing.overlay_rules[0].add: unknown route 'missing_route'",
             errors,
         )
+
+    def test_unknown_action_route_and_action_fail_actionably(self):
+        cases = (
+            ("deploy_production", ["missing_route"], "unknown route 'missing_route'"),
+            ("unknown_action", ["release"], "unknown action 'unknown_action'"),
+        )
+        for action, additions, expected in cases:
+            with self.subTest(action=action), temporary_repository() as root:
+                routing_path = root / ".claude/routing.yaml"
+                routing = yaml.safe_load(routing_path.read_text())
+                routing["action_routes"] = {action: additions}
+                routing_path.write_text(yaml.safe_dump(routing, sort_keys=False))
+
+                errors = self.engine.validate_bundle(root, None)
+
+            self.assertTrue(any(expected in error for error in errors), errors)
 
     def test_unknown_authority_fact_outcome_reference_fails(self):
         with temporary_repository() as root:

@@ -264,7 +264,23 @@
         "action": {"$ref": "#/properties/action"},
         "outcome": {"enum": ["autonomous", "autonomous_with_enhanced_gates", "human_required", "prohibited"]},
         "rule": {"type": "string", "minLength": 1},
-        "reason": {"type": "string", "minLength": 1}
+        "reason": {"type": "string", "minLength": 1},
+        "approval": {"$ref": "#/$defs/authority_approval"}
+      }
+    },
+    "authority_approval": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["decision_id", "rules", "hashes"],
+      "properties": {
+        "decision_id": {"type": "string", "minLength": 1},
+        "rules": {
+          "type": "array",
+          "minItems": 1,
+          "items": {"type": "string", "minLength": 1},
+          "uniqueItems": true
+        },
+        "hashes": {"$ref": "#/$defs/hashes"}
       }
     },
     "lifecycle_evidence": {

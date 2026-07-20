@@ -410,6 +410,7 @@ def _routing_reference_errors(bundle: dict[str, Any]) -> list[str]:
     routes = routing.get("routes")
     classification_rules = routing.get("classification_rules")
     overlay_rules = routing.get("overlay_rules")
+    action_routes = routing.get("action_routes")
     if not isinstance(facts, dict) or not isinstance(routes, dict):
         return []
 
@@ -448,6 +449,25 @@ def _routing_reference_errors(bundle: dict[str, Any]) -> list[str]:
                                 f"routing.overlay_rules[{index}].add: unknown route {route!r}"
                             )
                         )
+
+    if isinstance(action_routes, dict):
+        known_actions = policy.get("authority", {}).get("actions", {})
+        if not isinstance(known_actions, dict):
+            known_actions = {}
+        for action, additions in action_routes.items():
+            if action not in known_actions:
+                errors.append(
+                    _error(f"routing.action_routes: unknown action {action!r}")
+                )
+            if not isinstance(additions, list):
+                continue
+            for route in additions:
+                if isinstance(route, str) and route not in routes:
+                    errors.append(
+                        _error(
+                            f"routing.action_routes.{action}: unknown route {route!r}"
+                        )
+                    )
 
     risk = policy.get("risk")
     if isinstance(risk, dict):
@@ -672,17 +692,167 @@ def _vocabulary_errors(bundle: dict[str, Any]) -> list[str]:
     return errors
 
 
-def _project_safety_errors(bundle: dict[str, Any]) -> list[str]:
-    """Reject authority-bearing defaults while the template is unconfigured."""
+def _is_unresolved_project_value(value: Any) -> bool:
+    if not isinstance(value, str) or not value.strip():
+        return True
+    normalized = value.strip().casefold()
+    return normalized == "unknown" or (
+        normalized.startswith("<") and normalized.endswith(">")
+    )
+
+
+def _parent_permission_errors(project: dict[str, Any]) -> list[str]:
+    errors: list[str] = []
+    child_permissions = {
+        "remote_actions": (
+            "push_branch",
+            "open_pull_request",
+            "update_pull_request",
+            "merge_pull_request",
+            "create_release",
+        ),
+        "production_actions": ("deploy", "rollback"),
+    }
+    for section_name, children in child_permissions.items():
+        section = project.get(section_name)
+        if not isinstance(section, dict) or section.get("enabled") is not False:
+            continue
+        enabled_children = [name for name in children if section.get(name) is True]
+        if enabled_children:
+            errors.append(
+                _error(
+                    f"project.{section_name}: parent enabled: false conflicts "
+                    "with enabled child permissions: " + ", ".join(enabled_children)
+                )
+            )
+    return errors
+
+
+def _configured_project_errors(bundle: dict[str, Any]) -> list[str]:
+    """Reject configured authority whose permission-bearing inputs are unresolved."""
 
     project = bundle["project"]
-    project_identity = project.get("project")
-    if not isinstance(project_identity, dict):
-        return []
-    if project_identity.get("lifecycle") != "unconfigured":
+    identity = project.get("project")
+    if not isinstance(identity, dict) or identity.get("lifecycle") != "configured":
         return []
 
-    errors: list[str] = []
+    delivery = project.get("delivery")
+    delivery = delivery if isinstance(delivery, dict) else {}
+    data = project.get("data")
+    data = data if isinstance(data, dict) else {}
+    remote = project.get("remote_actions")
+    remote = remote if isinstance(remote, dict) else {}
+    production = project.get("production_actions")
+    production = production if isinstance(production, dict) else {}
+    environments = project.get("environments")
+    environments = environments if isinstance(environments, dict) else {}
+
+    errors = _parent_permission_errors(project)
+    required_values = (
+        ("project.project.name", identity.get("name")),
+        ("project.project.repository", identity.get("repository")),
+        ("project.delivery.owner", delivery.get("owner")),
+        (
+            "project.delivery.escalation_owner",
+            delivery.get("escalation_owner"),
+        ),
+        (
+            "project.remote_actions.repository",
+            remote.get("repository"),
+        ),
+        (
+            "project.data.regulated_data",
+            data.get("regulated_data"),
+        ),
+    )
+    for label, value in required_values:
+        if _is_unresolved_project_value(value):
+            errors.append(_error(f"{label}: configured project value must be resolved"))
+
+    classifications = data.get("classifications")
+    if not isinstance(classifications, list) or not classifications or any(
+        _is_unresolved_project_value(value) for value in classifications
+    ):
+        errors.append(
+            _error(
+                "project.data.classifications: configured project data posture "
+                "must contain resolved classifications"
+            )
+        )
+
+    if remote.get("enabled") is True:
+        repository = remote.get("repository")
+        if _is_unresolved_project_value(repository):
+            errors.append(
+                _error(
+                    "project.remote_actions.repository: enabled remote authority "
+                    "requires a resolved repository"
+                )
+            )
+        elif repository != identity.get("repository"):
+            errors.append(
+                _error(
+                    "project.remote_actions.repository: must match "
+                    "project.project.repository when remote authority is enabled"
+                )
+            )
+
+    if (
+        production.get("enabled") is True
+        or production.get("deploy") is True
+        or production.get("rollback") is True
+    ):
+        target = production.get("target")
+        if _is_unresolved_project_value(target):
+            errors.append(
+                _error(
+                    "project.production_actions.target: production authority "
+                    "requires a resolved target"
+                )
+            )
+        configured_environments = environments.get("configured")
+        if not isinstance(configured_environments, list) or not configured_environments:
+            errors.append(
+                _error(
+                    "project.environments.configured: production authority "
+                    "requires at least one configured environment"
+                )
+            )
+        elif (
+            not _is_unresolved_project_value(target)
+            and target not in configured_environments
+        ):
+            errors.append(
+                _error(
+                    "project.production_actions.target: target must name a "
+                    "configured environment"
+                )
+            )
+        if production.get("rollback") is not True:
+            errors.append(
+                _error(
+                    "project.production_actions.rollback: production authority "
+                    "requires rollback permission"
+                )
+            )
+    return errors
+
+
+def _project_safety_errors(bundle: dict[str, Any]) -> list[str]:
+    """Reject inconsistent authority and unsafe configured/unconfigured projects."""
+
+    project = bundle["project"]
+    identity = project.get("project")
+    if not isinstance(identity, dict):
+        return []
+
+    errors = _parent_permission_errors(project)
+    if identity.get("lifecycle") == "configured":
+        errors.extend(_configured_project_errors(bundle))
+        return sorted(set(errors))
+    if identity.get("lifecycle") != "unconfigured":
+        return sorted(set(errors))
+
     guarded_sections = {
         "remote_actions": (
             "enabled",
@@ -698,9 +868,7 @@ def _project_safety_errors(bundle: dict[str, Any]) -> list[str]:
         section = project.get(section_name)
         if not isinstance(section, dict):
             continue
-        enabled = [
-            name for name in permission_names if section.get(name) is True
-        ]
+        enabled = [name for name in permission_names if section.get(name) is True]
         if enabled:
             errors.append(
                 _error(
@@ -709,7 +877,7 @@ def _project_safety_errors(bundle: dict[str, Any]) -> list[str]:
                     + ", ".join(enabled)
                 )
             )
-    return errors
+    return sorted(set(errors))
 
 
 def _lifecycle_errors(bundle: dict[str, Any]) -> list[str]:
@@ -896,6 +1064,7 @@ def _evaluation_configuration_errors(bundle: dict[str, Any]) -> list[str]:
     errors.extend(_routing_reference_errors(bundle))
     errors.extend(_profile_reference_errors(bundle))
     errors.extend(_vocabulary_errors(bundle))
+    errors.extend(_configured_project_errors(bundle))
     errors.extend(_lifecycle_errors(bundle))
     return errors
 
@@ -1012,6 +1181,7 @@ def _evaluate_routing(
     for rule in routing["overlay_rules"]:
         if rule["overlay"] in active_overlays:
             _append_unique(classifications, rule["add"])
+    _append_unique(classifications, routing["action_routes"].get(context["action"], []))
 
     modules: list[str] = []
     _append_unique(modules, routing["always"]["rules"])
@@ -1253,6 +1423,72 @@ def _material_escalation_packet(
     }
 
 
+def _authority_escalation_packet(
+    bundle: dict[str, Any],
+    context: dict[str, Any],
+    authority: dict[str, Any],
+    risk: dict[str, Any],
+    hashes: dict[str, str],
+) -> dict[str, Any]:
+    human_rules = list(
+        dict.fromkeys(
+            item["rule"]
+            for item in authority["applicable"]
+            if item["outcome"] == "human_required"
+        )
+    )
+    if not human_rules:
+        raise PolicyInputError(
+            "human_required authority outcome has no applicable human rule"
+        )
+    decision_id = f"DEC-{context['change_id']}-AUTH-{context['action']}"
+    conditions = [
+        f"change_id={context['change_id']}",
+        f"action={context['action']}",
+        "rules=" + ",".join(human_rules),
+    ]
+    evidence = [record["source_ref"] for record in context["facts"].values()]
+    return {
+        "decision_id": decision_id,
+        "decision": {
+            "kind": "authority",
+            "action": context["action"],
+            "risk_tier": risk["tier"],
+            "rules": human_rules,
+        },
+        "resume_state": _escalation_resume_state(bundle, context),
+        "policy_trigger": "authority." + authority["selected"]["rule"],
+        "reason": (
+            "Deterministic policy requires human authority for: "
+            + ", ".join(human_rules)
+        ),
+        "evidence_collected": list(dict.fromkeys(evidence)),
+        "options": [
+            {
+                "id": "authorize_once",
+                "label": "Authorize once",
+                "consequence": (
+                    "Authorize only the listed rules for this action, policy, "
+                    "context, and change; enhanced gates still apply."
+                ),
+                "outcome": "autonomous_with_enhanced_gates",
+                "conditions": conditions,
+            }
+        ],
+        "recommended_option": "authorize_once",
+        "required_response": [
+            "decision_id",
+            "selected_option",
+            "decided_by",
+            "authority_basis",
+            "timestamp",
+            "hashes",
+        ],
+        "hashes": hashes,
+        "status": "open",
+    }
+
+
 def _evaluate_clarifications(
     bundle: dict[str, Any], context: dict[str, Any], hashes: dict[str, str]
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
@@ -1409,6 +1645,74 @@ def _project_authority_outcomes(
     return outcomes
 
 
+def _valid_authority_approval(
+    bundle: dict[str, Any],
+    context: dict[str, Any],
+    constraint: dict[str, Any],
+) -> bool:
+    approval = constraint.get("approval")
+    if not isinstance(approval, dict):
+        return False
+    if (
+        constraint.get("source") != "constitution"
+        or constraint.get("action") != context["action"]
+        or constraint.get("outcome") != "autonomous_with_enhanced_gates"
+    ):
+        return False
+
+    decision_id = approval.get("decision_id")
+    packet = context.get("open_escalation")
+    if (
+        not isinstance(packet, dict)
+        or packet.get("decision_id") != decision_id
+        or packet.get("status") != "resolved"
+        or packet.get("decision", {}).get("kind") != "authority"
+        or packet.get("decision", {}).get("action") != context["action"]
+    ):
+        return False
+    approved_rules = approval.get("rules")
+    packet_rules = packet.get("decision", {}).get("rules")
+    if not isinstance(approved_rules, list) or approved_rules != packet_rules:
+        return False
+
+    matching_constraints = [
+        item
+        for item in context["authority_constraints"]
+        if item.get("approval", {}).get("decision_id") == decision_id
+    ]
+    matching_responses = [
+        item for item in context["responses"] if item.get("decision_id") == decision_id
+    ]
+    if len(matching_constraints) != 1 or len(matching_responses) != 1:
+        return False
+    response = matching_responses[0]
+    hashes = approval.get("hashes")
+    if (
+        not isinstance(hashes, dict)
+        or hashes != response.get("hashes")
+        or hashes != packet.get("hashes")
+        or response.get("selected_option") != "authorize_once"
+        or hashes.get("policy_hash") != _policy_hash(bundle)
+        or hashes.get("change_hash") != context["change_hash"]
+    ):
+        return False
+
+    reconstructed = copy.deepcopy(context)
+    reconstructed["authority_constraints"] = [
+        item
+        for item in reconstructed["authority_constraints"]
+        if item.get("approval", {}).get("decision_id") != decision_id
+    ]
+    reconstructed["responses"] = [
+        item for item in reconstructed["responses"] if item.get("decision_id") != decision_id
+    ]
+    reconstructed_packet = copy.deepcopy(packet)
+    reconstructed_packet["status"] = "open"
+    reconstructed["open_escalation"] = reconstructed_packet
+    reconstructed["current_state"] = "HUMAN_DECISION_REQUIRED"
+    return _context_hash(reconstructed) == hashes.get("context_hash")
+
+
 def _evaluate_authority(
     bundle: dict[str, Any], context: dict[str, Any], risk: dict[str, Any],
     clarification_escalations: list[dict[str, Any]],
@@ -1434,8 +1738,12 @@ def _evaluate_authority(
                     "rule": f"fact_outcome:{fact_name}",
                 }
             )
+    valid_approvals: list[dict[str, Any]] = []
     for constraint in context["authority_constraints"]:
         if constraint.get("action") not in (None, action):
+            continue
+        if _valid_authority_approval(bundle, context, constraint):
+            valid_approvals.append(constraint)
             continue
         item = {
             "source": constraint["source"],
@@ -1471,6 +1779,25 @@ def _evaluate_authority(
                 "source": "constitution",
                 "outcome": "human_required",
                 "rule": "post_bootstrap_instruction_system_change",
+            }
+        )
+
+    for approval_constraint in valid_approvals:
+        approved_rules = set(approval_constraint["approval"]["rules"])
+        applicable = [
+            item
+            for item in applicable
+            if not (
+                item["outcome"] == "human_required"
+                and item["rule"] in approved_rules
+            )
+        ]
+        applicable.append(
+            {
+                "source": "constitution",
+                "outcome": "autonomous_with_enhanced_gates",
+                "rule": approval_constraint["rule"],
+                "reason": approval_constraint["reason"],
             }
         )
 
@@ -1527,6 +1854,12 @@ def evaluate(
             resources,
             fact_values,
         )
+        if authority["outcome"] == "human_required" and not escalations:
+            escalations = [
+                _authority_escalation_packet(
+                    bundle, context, authority, risk, hashes
+                )
+            ]
         return {
             "valid": True,
             "change_id": context["change_id"],
@@ -1565,6 +1898,8 @@ def _lifecycle_path_name(context: dict[str, Any]) -> str:
         return "deployment"
     if context["action"] == "create_release" or context["workflow_family"] == "release":
         return "release"
+    if context["action"] == "instruction_system_change":
+        return "code"
     if context["workflow_family"] == "maintenance":
         return "maintenance"
     return "code"
@@ -1761,17 +2096,36 @@ def respond(
             )
 
         updated_context = copy.deepcopy(context)
-        clarification_id = packet["decision"].get("clarification_id")
-        clarifications = [
-            item
-            for index, item in enumerate(updated_context["clarifications"])
-            if item.get("id", f"clarification-{index + 1}") == clarification_id
-        ]
-        if len(clarifications) != 1:
+        decision = packet["decision"]
+        clarification_id = decision.get("clarification_id")
+        decision_kind = decision.get("kind")
+        if clarification_id is not None:
+            clarifications = [
+                item
+                for index, item in enumerate(updated_context["clarifications"])
+                if item.get("id", f"clarification-{index + 1}") == clarification_id
+            ]
+            if len(clarifications) != 1:
+                raise PolicyInputError(
+                    "open_escalation.decision: clarification must match exactly "
+                    "one context item"
+                )
+            clarifications[0]["resolution"] = option["id"]
+        elif decision_kind == "authority":
+            rules = decision.get("rules")
+            if (
+                decision.get("action") != updated_context["action"]
+                or not isinstance(rules, list)
+                or not rules
+                or option["id"] != "authorize_once"
+            ):
+                raise PolicyInputError(
+                    "open_escalation.decision: authority packet scope is invalid"
+                )
+        else:
             raise PolicyInputError(
-                "open_escalation.decision: clarification must match exactly one context item"
+                "open_escalation.decision: unsupported decision kind"
             )
-        clarifications[0]["resolution"] = option["id"]
 
         recorded_response = copy.deepcopy(response)
         recorded_response["conditions"] = selected_conditions
@@ -1786,15 +2140,20 @@ def respond(
             reason = f"Human response selected {option['id']} for {packet['decision_id']}."
             if selected_conditions:
                 reason += " Conditions: " + ", ".join(selected_conditions)
-            updated_context["authority_constraints"].append(
-                {
-                    "source": "constitution",
-                    "action": updated_context["action"],
-                    "outcome": outcome,
-                    "rule": f"human_response:{packet['decision_id']}:{option['id']}",
-                    "reason": reason,
+            constraint: dict[str, Any] = {
+                "source": "constitution",
+                "action": updated_context["action"],
+                "outcome": outcome,
+                "rule": f"human_response:{packet['decision_id']}:{option['id']}",
+                "reason": reason,
+            }
+            if decision_kind == "authority":
+                constraint["approval"] = {
+                    "decision_id": packet["decision_id"],
+                    "rules": copy.deepcopy(decision["rules"]),
+                    "hashes": copy.deepcopy(response["hashes"]),
                 }
-            )
+            updated_context["authority_constraints"].append(constraint)
 
         reevaluated = evaluate(bundle, updated_context)
         return {

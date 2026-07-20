@@ -21,7 +21,7 @@
   ],
   "properties": {
     "schema_version": {"const": 1},
-    "control_plane_version": {"const": 1},
+    "control_plane_version": {"type": "integer", "minimum": 1},
     "instruction_system": {
       "type": "object",
       "additionalProperties": false,

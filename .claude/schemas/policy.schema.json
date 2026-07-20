@@ -64,10 +64,17 @@
         },
         "source_precedence": {
           "type": "array",
-          "minItems": 1,
-          "items": {
-            "enum": ["external_obligation", "constitution", "regulated_overlay", "project", "base_profile", "workflow"]
-          },
+          "minItems": 6,
+          "maxItems": 6,
+          "prefixItems": [
+            {"const": "external_obligation"},
+            {"const": "constitution"},
+            {"const": "regulated_overlay"},
+            {"const": "project"},
+            {"const": "base_profile"},
+            {"const": "workflow"}
+          ],
+          "items": false,
           "uniqueItems": true
         },
         "fact_outcomes": {

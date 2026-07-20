@@ -104,6 +104,63 @@ class PolicyEvaluationTest(unittest.TestCase):
         )
         self.assertEqual(result["profiles"], ["profiles/solo-developer.md"])
 
+    def test_action_routes_align_release_and_deployment_controls_with_lifecycle(self):
+        cases = (
+            (
+                "create_release",
+                ["documentation_only", "release"],
+                ["workflows/maintenance.md", "workflows/release.md"],
+                "release",
+            ),
+            (
+                "deploy_production",
+                [
+                    "documentation_only",
+                    "production_impact",
+                    "observability_impact",
+                    "release",
+                ],
+                ["workflows/maintenance.md", "workflows/release.md"],
+                "deployment",
+            ),
+            (
+                "instruction_system_change",
+                ["documentation_only", "instruction_system_change"],
+                [
+                    "workflows/maintenance.md",
+                    "workflows/instruction-system-change.md",
+                ],
+                "code",
+            ),
+        )
+        expected_control_modules = {
+            "create_release": {
+                "rules/release-management.md",
+                "rules/production-readiness.md",
+                "rules/observability.md",
+            },
+            "deploy_production": {
+                "rules/release-management.md",
+                "rules/production-readiness.md",
+                "rules/observability.md",
+            },
+            "instruction_system_change": {
+                "rules/security.md",
+                "rules/documentation.md",
+            },
+        }
+        for action, classifications, workflows, lifecycle_path in cases:
+            with self.subTest(action=action):
+                context = load_context("maintenance-low.yaml")
+                context["action"] = action
+
+                result = self.engine.evaluate(self.bundle, context)
+
+                self.assertEqual(result["classifications"], classifications)
+                self.assertEqual(result["workflows"], workflows)
+                self.assertTrue(expected_control_modules[action].issubset(result["modules"]))
+                self.assertEqual(self.engine._lifecycle_path_name(context), lifecycle_path)
+
     def test_regulated_project_overlay_routes_declared_controls(self):
         bundle = copy.deepcopy(self.bundle)
         bundle["project"]["delivery"]["overlays"] = ["regulated"]
@@ -355,6 +412,39 @@ class PolicyEvaluationTest(unittest.TestCase):
             )
         )
 
+    def test_configured_unresolved_remote_or_production_authority_cannot_evaluate(self):
+        cases = ("remote", "production")
+        for kind in cases:
+            with self.subTest(kind=kind):
+                bundle = copy.deepcopy(self.bundle)
+                project = bundle["project"]
+                project["project"].update(
+                    {"name": "delivery-template", "repository": "owner/repository", "lifecycle": "configured"}
+                )
+                project["delivery"].update(
+                    {"owner": "owner@example.com", "escalation_owner": "owner@example.com"}
+                )
+                project["data"].update(
+                    {"classifications": ["internal"], "regulated_data": "none"}
+                )
+                project["remote_actions"]["repository"] = "owner/repository"
+                context = load_context("maintenance-low.yaml")
+                if kind == "remote":
+                    project["remote_actions"].update(
+                        {"enabled": True, "repository": "unknown", "push_branch": True}
+                    )
+                    context["action"] = "push_branch"
+                    expected = "remote_actions.repository"
+                else:
+                    project["production_actions"].update(
+                        {"enabled": True, "target": "unknown", "deploy": True, "rollback": False}
+                    )
+                    context["action"] = "deploy_production"
+                    expected = "production_actions"
+
+                with self.assertRaisesRegex(self.engine.PolicyInputError, expected):
+                    self.engine.evaluate(bundle, context)
+
         production_bundle = copy.deepcopy(self.bundle)
         production_bundle["project"]["production_actions"].update(
             {"enabled": True, "target": "production", "deploy": True}
@@ -457,6 +547,39 @@ class PolicyEvaluationTest(unittest.TestCase):
             )
         )
 
+    def test_high_exception_emits_bounded_authority_packet(self):
+        bundle = copy.deepcopy(self.bundle)
+        bundle["project"]["project"].update(
+            {"name": "delivery-template", "repository": "owner/repository", "lifecycle": "configured"}
+        )
+        bundle["project"]["delivery"].update(
+            {"owner": "owner@example.com", "escalation_owner": "owner@example.com"}
+        )
+        bundle["project"]["data"].update(
+            {"classifications": ["internal"], "regulated_data": "none"}
+        )
+        bundle["project"]["remote_actions"]["repository"] = "owner/repository"
+        context = load_context("maintenance-low.yaml")
+        context["exceptions"] = [
+            {
+                "id": "EXP-HIGH",
+                "tier": "high",
+                "expires_at": "2026-07-25T00:00:00Z",
+            }
+        ]
+
+        result = self.engine.evaluate(
+            bundle,
+            context,
+            now=datetime(2026, 7, 20, tzinfo=timezone.utc),
+        )
+
+        self.assertEqual(result["authority"]["outcome"], "human_required")
+        self.assertEqual(len(result["escalations"]), 1)
+        packet = result["escalations"][0]
+        self.assertEqual(packet["decision"]["kind"], "authority")
+        self.assertIn("risk_exception:EXP-HIGH", packet["decision"]["rules"])
+
     def test_clarification_triage_resolves_defaults_and_escalates(self):
         context = load_context("maintenance-low.yaml")
         context["clarifications"] = [
@@ -556,13 +679,25 @@ class PolicyEvaluationTest(unittest.TestCase):
             self.engine.evaluate(self.bundle, invalid_recommendation)
 
     def test_resource_limit_exhaustion_requires_human_authority(self):
-        context = load_context("maintenance-low.yaml")
-        context["resources"]["repair_attempts"] = 3
+        cases = (
+            ("repair_attempts", 3),
+            ("ci_reruns", 2),
+            ("elapsed_minutes", 120),
+        )
+        for resource, value in cases:
+            with self.subTest(resource=resource):
+                context = load_context("maintenance-low.yaml")
+                context["resources"][resource] = value
 
-        result = self.engine.evaluate(self.bundle, context)
+                result = self.engine.evaluate(self.bundle, context)
 
-        self.assertEqual(result["resources"]["exhausted"], ["repair_attempts"])
-        self.assertEqual(result["authority"]["outcome"], "human_required")
+                self.assertEqual(result["resources"]["exhausted"], [resource])
+                self.assertEqual(result["authority"]["outcome"], "human_required")
+                self.assertEqual(len(result["escalations"]), 1)
+                packet = result["escalations"][0]
+                self.assertEqual(packet["decision"]["kind"], "authority")
+                self.assertIn("resource_limit_exhausted", packet["decision"]["rules"])
+                self.assertEqual(packet["recommended_option"], "authorize_once")
 
     def test_post_bootstrap_instruction_system_change_requires_human(self):
         bundle = copy.deepcopy(self.bundle)
@@ -582,6 +717,12 @@ class PolicyEvaluationTest(unittest.TestCase):
                 item["rule"] == "post_bootstrap_instruction_system_change"
                 for item in result["authority"]["applicable"]
             )
+        )
+        self.assertEqual(len(result["escalations"]), 1)
+        self.assertEqual(result["escalations"][0]["decision"]["kind"], "authority")
+        self.assertIn(
+            "post_bootstrap_instruction_system_change",
+            result["escalations"][0]["decision"]["rules"],
         )
 
     def test_policy_context_and_change_hash_boundaries(self):
