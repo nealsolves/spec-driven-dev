@@ -47,7 +47,7 @@
     "authority": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["outcomes", "source_precedence", "actions"],
+      "required": ["outcomes", "source_precedence", "fact_outcomes", "actions"],
       "properties": {
         "outcomes": {
           "type": "array",
@@ -69,6 +69,14 @@
             "enum": ["external_obligation", "constitution", "regulated_overlay", "project", "base_profile", "workflow"]
           },
           "uniqueItems": true
+        },
+        "fact_outcomes": {
+          "type": "object",
+          "minProperties": 1,
+          "additionalProperties": false,
+          "patternProperties": {
+            "^[a-z][a-z0-9_]*$": {"$ref": "#/$defs/outcome"}
+          }
         },
         "actions": {
           "type": "object",

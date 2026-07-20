@@ -76,6 +76,38 @@ class PolicyValidationTest(unittest.TestCase):
             errors,
         )
 
+    def test_unknown_overlay_route_fails(self):
+        with temporary_repository() as root:
+            routing_path = root / ".claude/routing.yaml"
+            routing = yaml.safe_load(routing_path.read_text())
+            routing["overlay_rules"] = [
+                {"overlay": "regulated", "add": ["missing_route"]}
+            ]
+            routing_path.write_text(yaml.safe_dump(routing, sort_keys=False))
+
+            errors = self.engine.validate_bundle(root, None)
+
+        self.assertIn(
+            "ERROR: routing.overlay_rules[0].add: unknown route 'missing_route'",
+            errors,
+        )
+
+    def test_unknown_authority_fact_outcome_reference_fails(self):
+        with temporary_repository() as root:
+            policy_path = root / ".claude/policy.yaml"
+            policy = yaml.safe_load(policy_path.read_text())
+            policy["authority"]["fact_outcomes"] = {
+                "missing_fact": "human_required"
+            }
+            policy_path.write_text(yaml.safe_dump(policy, sort_keys=False))
+
+            errors = self.engine.validate_bundle(root, None)
+
+        self.assertIn(
+            "ERROR: policy.authority.fact_outcomes: unknown fact 'missing_fact'",
+            errors,
+        )
+
     def test_duplicate_route_reference_fails(self):
         with temporary_repository() as root:
             routing_path = root / ".claude/routing.yaml"

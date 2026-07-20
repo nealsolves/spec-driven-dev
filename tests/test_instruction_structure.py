@@ -2,8 +2,16 @@ import re
 import unittest
 from pathlib import Path
 
+import yaml
+
 
 ROOT = Path(__file__).resolve().parents[1]
+
+POSITIVE_TEMPLATE_COMPLIANCE_CLAIM = re.compile(
+    r"\b(?:this |the |a )?template(?: (?:existence|presence))? "
+    r"(?:proves?|demonstrates?|establishes?|ensures?|guarantees?) compliance\b",
+    re.IGNORECASE,
+)
 
 RULE_HEADINGS = (
     "Purpose",
@@ -251,9 +259,10 @@ def read(path: str) -> str:
 
 class InstructionStructureTest(unittest.TestCase):
     def test_rule_directory_matches_routing_manifest(self):
-        routing_paths = set(
-            re.findall(r"rules/[a-z0-9-]+\.md", read(".claude/routing.yaml"))
-        )
+        routing = yaml.safe_load(read(".claude/routing.yaml"))
+        routing_paths = set(routing["always"]["rules"])
+        for route in routing["routes"].values():
+            routing_paths.update(route.get("rules", []))
         expected_paths = {f"rules/{name}" for name in RULE_TOPICS}
         actual_paths = {
             f"rules/{path.name}" for path in (ROOT / ".claude/rules").glob("*.md")
@@ -262,11 +271,6 @@ class InstructionStructureTest(unittest.TestCase):
         self.assertEqual(actual_paths, expected_paths)
 
     def test_rule_modules_have_required_contracts_and_topics(self):
-        prohibited_claim = re.compile(
-            r"template (?:existence|presence).*?(?:proves?|demonstrates?|establishes?) "
-            r"compliance",
-            re.IGNORECASE | re.DOTALL,
-        )
         for name, topics in RULE_TOPICS.items():
             with self.subTest(rule=name):
                 content = read(f".claude/rules/{name}")
@@ -284,8 +288,25 @@ class InstructionStructureTest(unittest.TestCase):
                 lowered = re.sub(r"\s+", " ", content.lower())
                 for topic in topics:
                     self.assertIn(topic, lowered, f"{name}: missing {topic}")
-                if name != "compliance.md":
-                    self.assertIsNone(prohibited_claim.search(content), name)
+                self.assertIsNone(
+                    POSITIVE_TEMPLATE_COMPLIANCE_CLAIM.search(lowered), name
+                )
+
+    def test_template_compliance_check_distinguishes_negation_from_claim(self):
+        self.assertIsNone(
+            POSITIVE_TEMPLATE_COMPLIANCE_CLAIM.search(
+                "Template presence does not prove compliance."
+            )
+        )
+        for positive_claim in (
+            "This template proves compliance.",
+            "Template presence demonstrates compliance.",
+            "A template guarantees compliance.",
+        ):
+            with self.subTest(positive_claim=positive_claim):
+                self.assertIsNotNone(
+                    POSITIVE_TEMPLATE_COMPLIANCE_CLAIM.search(positive_claim)
+                )
 
     def test_root_kernel_is_compact_and_has_required_sections(self):
         root = read("CLAUDE.md")

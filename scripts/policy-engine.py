@@ -409,6 +409,7 @@ def _routing_reference_errors(bundle: dict[str, Any]) -> list[str]:
     facts = routing.get("facts")
     routes = routing.get("routes")
     classification_rules = routing.get("classification_rules")
+    overlay_rules = routing.get("overlay_rules")
     if not isinstance(facts, dict) or not isinstance(routes, dict):
         return []
 
@@ -431,6 +432,20 @@ def _routing_reference_errors(bundle: dict[str, Any]) -> list[str]:
                         errors.append(
                             _error(
                                 f"routing.classification_rules[{index}].add: unknown route {route!r}"
+                            )
+                        )
+
+    if isinstance(overlay_rules, list):
+        for index, rule in enumerate(overlay_rules):
+            if not isinstance(rule, dict):
+                continue
+            additions = rule.get("add")
+            if isinstance(additions, list):
+                for route in additions:
+                    if isinstance(route, str) and route not in routes:
+                        errors.append(
+                            _error(
+                                f"routing.overlay_rules[{index}].add: unknown route {route!r}"
                             )
                         )
 
@@ -460,6 +475,17 @@ def _routing_reference_errors(bundle: dict[str, Any]) -> list[str]:
                                 f"policy.risk.escalation[{index}].when_all: unknown fact {fact!r}"
                             )
                         )
+    authority = policy.get("authority")
+    if isinstance(authority, dict):
+        fact_outcomes = authority.get("fact_outcomes")
+        if isinstance(fact_outcomes, dict):
+            for fact in fact_outcomes:
+                if fact not in facts:
+                    errors.append(
+                        _error(
+                            f"policy.authority.fact_outcomes: unknown fact {fact!r}"
+                        )
+                    )
     return errors
 
 
@@ -847,6 +873,10 @@ def _evaluate_routing(
     classifications: list[str] = []
     for rule in routing["classification_rules"]:
         if fact_values.get(rule["fact"]) == rule["equals"]:
+            _append_unique(classifications, rule["add"])
+    active_overlays = set(bundle["project"]["delivery"]["overlays"])
+    for rule in routing["overlay_rules"]:
+        if rule["overlay"] in active_overlays:
             _append_unique(classifications, rule["add"])
 
     modules: list[str] = []
@@ -1252,6 +1282,15 @@ def _evaluate_authority(
         }
     ]
     applicable.extend(_project_authority_outcomes(bundle, context))
+    for fact_name, outcome in authority_policy["fact_outcomes"].items():
+        if fact_values.get(fact_name) is True:
+            applicable.append(
+                {
+                    "source": "constitution",
+                    "outcome": outcome,
+                    "rule": f"fact_outcome:{fact_name}",
+                }
+            )
     for constraint in context["authority_constraints"]:
         if constraint.get("action") not in (None, action):
             continue

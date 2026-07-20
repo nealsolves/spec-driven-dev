@@ -4,7 +4,7 @@
   "title": "Routing control plane",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schema_version", "always", "facts", "workflow_rules", "classification_rules", "routes"],
+  "required": ["schema_version", "always", "facts", "workflow_rules", "classification_rules", "overlay_rules", "routes"],
   "properties": {
     "schema_version": {"const": 1},
     "always": {
@@ -34,6 +34,11 @@
     "classification_rules": {
       "type": "array",
       "items": {"$ref": "#/$defs/rule"}
+    },
+    "overlay_rules": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/overlay_rule"},
+      "uniqueItems": true
     },
     "routes": {
       "type": "object",
@@ -85,6 +90,20 @@
             {"const": "unknown"}
           ]
         },
+        "add": {
+          "type": "array",
+          "minItems": 1,
+          "items": {"type": "string", "pattern": "^[a-z][a-z0-9_]*$"},
+          "uniqueItems": true
+        }
+      }
+    },
+    "overlay_rule": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["overlay", "add"],
+      "properties": {
+        "overlay": {"type": "string", "pattern": "^[a-z][a-z0-9_]*$"},
         "add": {
           "type": "array",
           "minItems": 1,

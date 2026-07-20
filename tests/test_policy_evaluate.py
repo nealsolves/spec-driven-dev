@@ -103,6 +103,55 @@ class PolicyEvaluationTest(unittest.TestCase):
             ["workflows/feature-development.md", "workflows/release.md"],
         )
 
+    def test_regulated_project_overlay_routes_declared_controls(self):
+        bundle = copy.deepcopy(self.bundle)
+        bundle["project"]["delivery"]["overlays"] = ["regulated"]
+        context = load_context("maintenance-low.yaml")
+        self.assertNotIn("unsupported_regulatory_exception", context["facts"])
+
+        result = self.engine.evaluate(bundle, context)
+
+        self.assertEqual(
+            result["classifications"], ["documentation_only", "regulated_scope"]
+        )
+        self.assertIn("rules/compliance.md", result["modules"])
+        self.assertIn("rules/ownership.md", result["modules"])
+
+    def test_new_sensitive_data_class_routes_and_requires_human_authority(self):
+        context = load_context("maintenance-low.yaml")
+        context["facts"] = {
+            "introduces_sensitive_data_class": fact(
+                True, "tests/fixtures/evidence/schema-diff.json"
+            )
+        }
+
+        result = self.engine.evaluate(self.bundle, context)
+
+        self.assertEqual(
+            result["classifications"], ["data_sensitive", "regulated_scope"]
+        )
+        self.assertEqual(result["risk"]["tier"], "high")
+        self.assertEqual(result["authority"]["outcome"], "human_required")
+        self.assertIn("rules/data-privacy.md", result["modules"])
+        self.assertIn("rules/security.md", result["modules"])
+        self.assertIn("rules/compliance.md", result["modules"])
+        self.assertIn("rules/ownership.md", result["modules"])
+        self.assertIn(
+            {
+                "source": "constitution",
+                "outcome": "human_required",
+                "rule": "fact_outcome:introduces_sensitive_data_class",
+            },
+            result["authority"]["applicable"],
+        )
+
+        overlay_bundle = copy.deepcopy(self.bundle)
+        overlay_bundle["project"]["delivery"]["overlays"] = ["regulated"]
+        combined = self.engine.evaluate(overlay_bundle, context)
+        self.assertEqual(combined["classifications"].count("regulated_scope"), 1)
+        self.assertEqual(combined["modules"].count("rules/compliance.md"), 1)
+        self.assertEqual(combined["modules"].count("rules/ownership.md"), 1)
+
     def test_material_unknown_fact_fails_closed(self):
         with self.assertRaisesRegex(
             self.engine.PolicyInputError,
