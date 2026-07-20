@@ -101,6 +101,30 @@ class PolicyValidationTest(unittest.TestCase):
             errors,
         )
 
+    def test_bootstrapping_allows_not_yet_created_markdown_namespaces(self):
+        with temporary_repository() as root:
+            errors = self.engine.validate_bundle(root, None)
+
+        self.assertEqual(errors, [])
+
+    def test_complete_module_state_requires_all_markdown_references(self):
+        with temporary_repository() as root:
+            project_path = root / ".claude/project.yaml"
+            project = yaml.safe_load(project_path.read_text())
+            project.setdefault("instruction_system", {})["module_state"] = "complete"
+            project_path.write_text(yaml.safe_dump(project, sort_keys=False))
+
+            errors = self.engine.validate_bundle(root, None)
+
+        self.assertIn(
+            "ERROR: routing markdown path does not exist: .claude/rules/engineering.md",
+            errors,
+        )
+        self.assertIn(
+            "ERROR: routing markdown path does not exist: .claude/workflows/maintenance.md",
+            errors,
+        )
+
     def test_lifecycle_path_requires_declared_transition(self):
         with temporary_repository() as root:
             lifecycle_path = root / ".claude/lifecycle.yaml"
@@ -119,6 +143,56 @@ class PolicyValidationTest(unittest.TestCase):
 
         self.assertIn(
             "ERROR: lifecycle.paths.maintenance: transition CLASSIFIED -> VALIDATING is not declared",
+            errors,
+        )
+
+    def test_reachable_normal_state_must_have_completion_path(self):
+        with temporary_repository() as root:
+            lifecycle_path = root / ".claude/lifecycle.yaml"
+            lifecycle = yaml.safe_load(lifecycle_path.read_text())
+            lifecycle["exceptional_states"].remove("INCIDENT")
+            lifecycle["normal_states"].append("INCIDENT")
+            lifecycle["transitions"].append(
+                {
+                    "from": "UNCLASSIFIED",
+                    "to": "INCIDENT",
+                    "requires": ["incident_detected"],
+                }
+            )
+            lifecycle_path.write_text(yaml.safe_dump(lifecycle, sort_keys=False))
+
+            errors = self.engine.validate_bundle(root, None)
+
+        self.assertIn(
+            "ERROR: lifecycle.normal_states: state INCIDENT cannot reach COMPLETE",
+            errors,
+        )
+
+    def test_workflow_vocabulary_must_match_context_schema(self):
+        with temporary_repository() as root:
+            routing_path = root / ".claude/routing.yaml"
+            routing = yaml.safe_load(routing_path.read_text())
+            routing["workflow_rules"]["experimental"] = "workflows/maintenance.md"
+            routing_path.write_text(yaml.safe_dump(routing, sort_keys=False))
+
+            errors = self.engine.validate_bundle(root, None)
+
+        self.assertIn(
+            "ERROR: vocabulary.workflow_family: configured-only values: experimental",
+            errors,
+        )
+
+    def test_action_vocabulary_must_match_context_schema(self):
+        with temporary_repository() as root:
+            policy_path = root / ".claude/policy.yaml"
+            policy = yaml.safe_load(policy_path.read_text())
+            del policy["authority"]["actions"]["risk_exception"]
+            policy_path.write_text(yaml.safe_dump(policy, sort_keys=False))
+
+            errors = self.engine.validate_bundle(root, None)
+
+        self.assertIn(
+            "ERROR: vocabulary.action: schema-only values: risk_exception",
             errors,
         )
 
@@ -183,6 +257,30 @@ class PolicyValidationTest(unittest.TestCase):
         self.assertIn("ERROR: project: invalid YAML", payload["errors"][0])
         self.assertNotIn("Traceback", result.stdout + result.stderr)
         self.assertEqual(result.stdout.count("\n"), 1)
+
+    def test_broken_local_schema_ref_cli_fails_as_one_json_object(self):
+        with temporary_repository() as root:
+            schema_path = root / ".claude/schemas/project.schema.json"
+            schema = json.loads(schema_path.read_text())
+            schema["properties"]["schema_version"] = {"$ref": "#/$defs/missing"}
+            schema_path.write_text(json.dumps(schema))
+            result = subprocess.run(
+                [sys.executable, str(ENGINE_PATH), "validate", "--root", str(root)],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+
+        payload = json.loads(result.stdout)
+        self.assertEqual(result.returncode, 1)
+        self.assertFalse(payload["valid"])
+        self.assertEqual(result.stderr, "")
+        self.assertEqual(result.stdout.count("\n"), 1)
+        self.assertIn(
+            "ERROR: project: unresolved schema reference: #/$defs/missing",
+            payload["errors"],
+        )
+        self.assertNotIn("Traceback", result.stdout + result.stderr)
 
     def test_only_validate_is_a_public_command(self):
         result = subprocess.run(

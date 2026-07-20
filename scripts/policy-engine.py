@@ -13,6 +13,7 @@ from typing import Any, Iterable
 
 import jsonschema
 import yaml
+from referencing.exceptions import Unresolvable
 
 
 CONTROL_FILES = {
@@ -89,6 +90,11 @@ def canonical_hash(value: Any) -> str:
 
 def _error(message: str) -> str:
     return f"ERROR: {message}"
+
+
+def _unresolved_reference(exc: Unresolvable) -> str:
+    reference = str(getattr(exc, "ref", None) or exc)
+    return f"#{reference}" if reference.startswith("/") else reference
 
 
 def _read_text(path: Path, label: str) -> str:
@@ -173,9 +179,14 @@ def _schema_validation_errors(
     validator = jsonschema.Draft202012Validator(
         schema, format_checker=jsonschema.FormatChecker()
     )
-    validation_errors = sorted(
-        validator.iter_errors(value), key=lambda item: tuple(str(p) for p in item.path)
-    )
+    try:
+        validation_errors = sorted(
+            validator.iter_errors(value),
+            key=lambda item: tuple(str(p) for p in item.path),
+        )
+    except Unresolvable as exc:
+        reference = _unresolved_reference(exc)
+        return [_error(f"{name}: unresolved schema reference: {reference}")]
     for validation_error in validation_errors:
         location = _json_path(validation_error.path)
         label = f"{name}.{location}" if location else name
@@ -195,10 +206,17 @@ def _control_schema_errors(bundle: dict[str, Any]) -> list[str]:
         lifecycle_validator = jsonschema.Draft202012Validator(
             policy_schema, format_checker=jsonschema.FormatChecker()
         ).evolve(schema={"$ref": "#/$defs/lifecycle"})
-        lifecycle_errors = sorted(
-            lifecycle_validator.iter_errors(bundle["lifecycle"]),
-            key=lambda item: tuple(str(p) for p in item.path),
-        )
+        try:
+            lifecycle_errors = sorted(
+                lifecycle_validator.iter_errors(bundle["lifecycle"]),
+                key=lambda item: tuple(str(p) for p in item.path),
+            )
+        except Unresolvable as exc:
+            reference = _unresolved_reference(exc)
+            errors.append(
+                _error(f"lifecycle: unresolved schema reference: {reference}")
+            )
+            lifecycle_errors = []
         for validation_error in lifecycle_errors:
             location = _json_path(validation_error.path)
             label = f"lifecycle.{location}" if location else "lifecycle"
@@ -301,15 +319,71 @@ def _markdown_reference_errors(bundle: dict[str, Any]) -> list[str]:
 
     errors: list[str] = []
     seen: set[str] = set()
+    instruction_system = bundle["project"].get("instruction_system", {})
+    module_state = (
+        instruction_system.get("module_state")
+        if isinstance(instruction_system, dict)
+        else None
+    )
     for reference in references:
         if not isinstance(reference, str) or reference in seen:
             continue
         seen.add(reference)
         namespace = reference.partition("/")[0]
         namespace_root = root / ".claude" / namespace
-        if namespace_root.is_dir() and not (root / ".claude" / reference).is_file():
+        namespace_is_enforced = (
+            module_state == "complete" or namespace_root.is_dir()
+        )
+        if namespace_is_enforced and not (root / ".claude" / reference).is_file():
             errors.append(
                 _error(f"routing markdown path does not exist: .claude/{reference}")
+            )
+    return errors
+
+
+def _vocabulary_errors(bundle: dict[str, Any]) -> list[str]:
+    context_properties = bundle["schemas"]["context"].get("properties")
+    if not isinstance(context_properties, dict):
+        return []
+
+    comparisons = (
+        (
+            "workflow_family",
+            bundle["routing"].get("workflow_rules"),
+            context_properties.get("workflow_family"),
+        ),
+        (
+            "action",
+            bundle["policy"].get("authority", {}).get("actions"),
+            context_properties.get("action"),
+        ),
+    )
+    errors: list[str] = []
+    for name, configured_mapping, schema_property in comparisons:
+        if not isinstance(configured_mapping, dict) or not isinstance(
+            schema_property, dict
+        ):
+            continue
+        schema_values = schema_property.get("enum")
+        if not isinstance(schema_values, list) or not all(
+            isinstance(value, str) for value in schema_values
+        ):
+            continue
+        configured = set(configured_mapping)
+        declared = set(schema_values)
+        configured_only = sorted(configured - declared)
+        schema_only = sorted(declared - configured)
+        if configured_only:
+            errors.append(
+                _error(
+                    f"vocabulary.{name}: configured-only values: {', '.join(configured_only)}"
+                )
+            )
+        if schema_only:
+            errors.append(
+                _error(
+                    f"vocabulary.{name}: schema-only values: {', '.join(schema_only)}"
+                )
             )
     return errors
 
@@ -390,6 +464,27 @@ def _lifecycle_errors(bundle: dict[str, Any]) -> list[str]:
     for state in normal_states:
         if state not in reachable:
             errors.append(_error(f"lifecycle.normal_states: state {state} is unreachable"))
+
+    reverse_adjacency: dict[str, set[str]] = {
+        state: set() for state in declared_states
+    }
+    for source, target in edges:
+        reverse_adjacency.setdefault(target, set()).add(source)
+    can_complete: set[str] = set()
+    queue = deque(["COMPLETE"])
+    while queue:
+        state = queue.popleft()
+        if state in can_complete:
+            continue
+        can_complete.add(state)
+        queue.extend(reverse_adjacency.get(state, set()) - can_complete)
+    for state in normal_states:
+        if state not in can_complete:
+            errors.append(
+                _error(
+                    f"lifecycle.normal_states: state {state} cannot reach COMPLETE"
+                )
+            )
     return errors
 
 
@@ -438,12 +533,16 @@ def validate_bundle(root: Path, context_path: Path | None) -> list[str]:
         errors = _control_schema_errors(bundle)
         errors.extend(_routing_reference_errors(bundle))
         errors.extend(_markdown_reference_errors(bundle))
+        errors.extend(_vocabulary_errors(bundle))
         errors.extend(_lifecycle_errors(bundle))
         if context_path is not None:
             errors.extend(_context_errors(bundle, Path(context_path)))
         return sorted(set(errors))
     except PolicyInputError as exc:
         return [_error(str(exc))]
+    except Unresolvable as exc:
+        reference = _unresolved_reference(exc)
+        return [_error(f"unresolved schema reference: {reference}")]
     except (KeyError, TypeError, ValueError) as exc:
         # Malformed user data should remain a stable validation result, not a traceback.
         return [_error(f"invalid control-plane structure: {exc}")]

@@ -15,6 +15,8 @@
 - Version 1 has exactly four formal schemas: project, routing, policy, and context.
 - The public engine interface is exactly `validate`, `evaluate`, `transition`, and `respond`.
 - The reusable template is solo-capable but starts with lifecycle `unconfigured`; remote and production actions are disabled.
+- Markdown modules start in explicit `bootstrapping` state and must switch to
+  `complete` after Task 7 installs all configured rules and workflows.
 - Risk uses highest inherent tier, explicit escalation modifiers, and automatic critical overrides—no weights or dimensional aggregation.
 - Evidence freshness uses `policy_hash`, `context_hash`, and `change_hash` only.
 - Ordinary facts need one strong source; corroboration applies only to configured high-risk negative claims.
@@ -179,6 +181,8 @@ Create `.claude/project.yaml`:
 ```yaml
 schema_version: 1
 control_plane_version: 1
+instruction_system:
+  module_state: bootstrapping
 project:
   name: <product>
   repository: <owner/repository>
@@ -941,6 +945,7 @@ git commit -m "docs(rules): add proportional delivery controls"
 - Create: `.claude/templates/release-readiness-template.md`
 - Create: `.claude/templates/incident-record-template.md`
 - Create: `.claude/templates/maintenance-record-template.md`
+- Modify: `.claude/project.yaml`
 - Modify: `tests/test_instruction_structure.py`
 
 **Interfaces:**
@@ -952,7 +957,8 @@ git commit -m "docs(rules): add proportional delivery controls"
 Assert every workflow has Entry criteria, Artifacts, Gates, Ordered steps,
 Evidence, Exit criteria, Solo mode, and Stop/escalation conditions. Assert every
 profile and template exists and contains the fields named in Steps 3–26. Assert
-`regulated.md` says it may override solo allowances.
+`regulated.md` says it may override solo allowances. Assert
+`instruction_system.module_state` is `complete`.
 
 - [ ] **Step 2: Run and observe missing-file failures**
 
@@ -1093,11 +1099,23 @@ contributors, corrective actions, regression tests, spec changes, and owner.
 Include change type/ID, scope, behavior impact, facts, risk, activated modules,
 validation/review evidence, rollback, hashes, authority, and PR link.
 
-- [ ] **Step 27: Run tests and commit**
+- [ ] **Step 27: Complete the Markdown module installation**
+
+After every configured rule and workflow exists, set:
+
+```yaml
+instruction_system:
+  module_state: complete
+```
+
+This explicit state makes missing references non-bypassable in the completed
+template, including when an entire module namespace is deleted.
+
+- [ ] **Step 28: Run tests and commit**
 
 ```bash
 .venv/bin/python -m unittest tests.test_instruction_structure -v
-git add .claude/workflows .claude/profiles .claude/templates tests/test_instruction_structure.py
+git add .claude/project.yaml .claude/workflows .claude/profiles .claude/templates tests/test_instruction_structure.py
 git commit -m "docs(workflows): add autonomous delivery playbooks"
 ```
 

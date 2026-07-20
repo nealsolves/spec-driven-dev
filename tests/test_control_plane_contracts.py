@@ -135,6 +135,9 @@ class ControlPlaneContractsTest(unittest.TestCase):
     def test_unconfigured_defaults_are_safe(self):
         project = yaml.safe_load((ROOT / ".claude/project.yaml").read_text())
         self.assertEqual(project["project"]["lifecycle"], "unconfigured")
+        self.assertEqual(
+            project["instruction_system"]["module_state"], "bootstrapping"
+        )
         self.assertFalse(project["remote_actions"]["enabled"])
         self.assertFalse(project["production_actions"]["enabled"])
 
