@@ -45,6 +45,7 @@ open_escalation:
   decision:
     clarification_id: RETENTION
     question: How long should customer documents be retained?
+  resume_state: CLASSIFIED
   policy_trigger: clarifications.material_business
   reason: Pending bounded human authority decision.
   evidence_collected: [tests/fixtures/evidence/docs-diff.json]

@@ -93,6 +93,12 @@
         "BLOCKED_REQUIREMENT", "BLOCKED_POLICY", "BLOCKED_TECHNICAL", "HUMAN_DECISION_REQUIRED", "ROLLBACK_REQUIRED", "INCIDENT"
       ]
     },
+    "normal_lifecycle_state": {
+      "type": "string",
+      "enum": [
+        "UNCLASSIFIED", "CLASSIFIED", "SPECIFIED", "CLARIFIED", "PLANNED", "TASKED", "ANALYZED", "IMPLEMENTING", "VALIDATING", "REVIEWING", "CONVERGING", "RELEASE_READY", "DEPLOYING", "VERIFYING", "COMPLETE"
+      ]
+    },
     "classification": {
       "type": "string",
       "pattern": "^[a-z][a-z0-9_]*$"
@@ -289,10 +295,11 @@
     "escalation_packet": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["decision_id", "decision", "policy_trigger", "reason", "evidence_collected", "options", "recommended_option", "required_response", "hashes", "status"],
+      "required": ["decision_id", "decision", "resume_state", "policy_trigger", "reason", "evidence_collected", "options", "recommended_option", "required_response", "hashes", "status"],
       "properties": {
         "decision_id": {"type": "string", "minLength": 1},
         "decision": {"type": "object"},
+        "resume_state": {"$ref": "#/$defs/normal_lifecycle_state"},
         "policy_trigger": {"type": "string", "minLength": 1},
         "reason": {"type": "string", "minLength": 1},
         "evidence_collected": {

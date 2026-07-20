@@ -446,6 +446,7 @@ class PolicyEvaluationTest(unittest.TestCase):
         self.assertEqual(packet["hashes"], result["hashes"])
         self.assertEqual(packet["options"], context["clarifications"][2]["options"])
         self.assertEqual(packet["recommended_option"], "90-days")
+        self.assertEqual(packet["resume_state"], "UNCLASSIFIED")
         self.assertTrue(packet["required_response"])
 
     def test_material_clarification_requires_actionable_unique_options(self):
@@ -542,9 +543,38 @@ class PolicyEvaluationTest(unittest.TestCase):
             }
         ]
         response_result = self.engine.evaluate(self.bundle, with_response)
-        self.assertEqual(
+        self.assertNotEqual(
             baseline["hashes"]["context_hash"],
             response_result["hashes"]["context_hash"],
+        )
+
+        response_fields = {
+            "selected_option": "option-2",
+            "decided_by": "delegate@example.com",
+            "authority_basis": "product_owner",
+            "timestamp": "2026-07-20T13:00:00Z",
+            "conditions": ["retention_period_days=90"],
+        }
+        for field, value in response_fields.items():
+            with self.subTest(response_field=field):
+                changed_response = copy.deepcopy(with_response)
+                changed_response["responses"][0][field] = value
+                changed_result = self.engine.evaluate(self.bundle, changed_response)
+                self.assertNotEqual(
+                    response_result["hashes"]["context_hash"],
+                    changed_result["hashes"]["context_hash"],
+                )
+
+        prior_hashes_only = copy.deepcopy(with_response)
+        prior_hashes_only["responses"][0]["hashes"] = {
+            "policy_hash": "3" * 64,
+            "context_hash": "4" * 64,
+            "change_hash": "5" * 64,
+        }
+        prior_hashes_result = self.engine.evaluate(self.bundle, prior_hashes_only)
+        self.assertEqual(
+            response_result["hashes"]["context_hash"],
+            prior_hashes_result["hashes"]["context_hash"],
         )
 
         changed_bundle = copy.deepcopy(self.bundle)

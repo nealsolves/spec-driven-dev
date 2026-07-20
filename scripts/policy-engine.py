@@ -918,7 +918,6 @@ def _context_hash(context: dict[str, Any]) -> str:
         "decisions",
         "evaluation",
         "open_escalation",
-        "responses",
     ):
         hash_input.pop(generated_key, None)
     evidence = hash_input.get("evidence")
@@ -926,6 +925,11 @@ def _context_hash(context: dict[str, Any]) -> str:
         for record in evidence.values():
             if isinstance(record, dict):
                 record.pop("hashes", None)
+    responses = hash_input.get("responses")
+    if isinstance(responses, list):
+        for response in responses:
+            if isinstance(response, dict):
+                response.pop("hashes", None)
     return canonical_hash(hash_input)
 
 
@@ -1005,9 +1009,35 @@ def _evaluate_exceptions(
     return results, authority
 
 
+def _escalation_resume_state(
+    bundle: dict[str, Any], context: dict[str, Any]
+) -> str:
+    normal_states = set(bundle["lifecycle"]["normal_states"])
+    current_state = context["current_state"]
+    if current_state in normal_states:
+        return current_state
+    if current_state == "HUMAN_DECISION_REQUIRED":
+        packet = context.get("open_escalation")
+        if isinstance(packet, dict) and packet.get("status") == "open":
+            resume_state = packet.get("resume_state")
+            if resume_state in normal_states:
+                return resume_state
+        raise PolicyInputError(
+            "open_escalation.resume_state: an open human decision must preserve "
+            "a declared normal resume state"
+        )
+    raise PolicyInputError(
+        f"context.current_state: cannot generate a human decision packet from "
+        f"{current_state}"
+    )
+
+
 def _material_escalation_packet(
-    context: dict[str, Any], clarification: dict[str, Any], index: int,
-    hashes: dict[str, str]
+    bundle: dict[str, Any],
+    context: dict[str, Any],
+    clarification: dict[str, Any],
+    index: int,
+    hashes: dict[str, str],
 ) -> dict[str, Any]:
     clarification_id = clarification.get("id", f"clarification-{index + 1}")
     options = copy.deepcopy(clarification["options"])
@@ -1029,6 +1059,7 @@ def _material_escalation_packet(
             "clarification_id": clarification_id,
             "question": clarification["question"],
         },
+        "resume_state": _escalation_resume_state(bundle, context),
         "policy_trigger": "clarifications.material_business",
         "reason": "No deterministic repository evidence or bounded default can resolve this material business decision.",
         "evidence_collected": list(dict.fromkeys(evidence)),
@@ -1093,7 +1124,7 @@ def _evaluate_clarifications(
             )
         else:
             packet = _material_escalation_packet(
-                context, clarification, index, hashes
+                bundle, context, clarification, index, hashes
             )
             if "resolution" in clarification:
                 option_ids = [option["id"] for option in packet["options"]]
@@ -1364,8 +1395,15 @@ def transition(
     try:
         current = evaluate(bundle, context)
         _require_fresh_hashes("decision.hashes", decision.get("hashes"), current["hashes"])
-        if current["authority"]["outcome"] == "prohibited":
-            raise PolicyInputError("current action is prohibited")
+        authority_outcome = current["authority"]["outcome"]
+        if authority_outcome not in (
+            "autonomous",
+            "autonomous_with_enhanced_gates",
+        ):
+            raise PolicyInputError(
+                f"current action authority is {authority_outcome}; a fresh permitted "
+                "authority decision is required before transition"
+            )
 
         source_state = context["current_state"]
         path_name = _lifecycle_path_name(context)
@@ -1469,11 +1507,28 @@ def respond(
         _raise_evaluation_errors(_evaluation_configuration_errors(bundle))
         _raise_evaluation_errors(_context_value_errors(bundle, context))
         _raise_evaluation_errors(_response_schema_errors(bundle, response))
-        current = evaluate(bundle, context)
+        if context["current_state"] != "HUMAN_DECISION_REQUIRED":
+            raise PolicyInputError(
+                "context.current_state: response requires HUMAN_DECISION_REQUIRED"
+            )
+        recovery = bundle["lifecycle"]["recoveries"].get(
+            "HUMAN_DECISION_REQUIRED"
+        )
+        if recovery != "validated_response":
+            raise PolicyInputError(
+                "lifecycle recovery for HUMAN_DECISION_REQUIRED must be "
+                "validated_response"
+            )
 
         packet = context.get("open_escalation")
         if not isinstance(packet, dict) or packet.get("status") != "open":
             raise PolicyInputError("open_escalation: exactly one open packet is required")
+        resume_state = packet.get("resume_state")
+        if resume_state not in set(bundle["lifecycle"]["normal_states"]):
+            raise PolicyInputError(
+                "open_escalation.resume_state: must be a declared normal state"
+            )
+        current = evaluate(bundle, context)
         if response["decision_id"] != packet.get("decision_id"):
             raise PolicyInputError("response.decision_id: does not match the open packet")
         _require_fresh_hashes("open_escalation.hashes", packet.get("hashes"), current["hashes"])
@@ -1513,8 +1568,8 @@ def respond(
         clarification_id = packet["decision"].get("clarification_id")
         clarifications = [
             item
-            for item in updated_context["clarifications"]
-            if item.get("id") == clarification_id
+            for index, item in enumerate(updated_context["clarifications"])
+            if item.get("id", f"clarification-{index + 1}") == clarification_id
         ]
         if len(clarifications) != 1:
             raise PolicyInputError(
@@ -1528,6 +1583,7 @@ def respond(
         resolved_packet = copy.deepcopy(packet)
         resolved_packet["status"] = "resolved"
         updated_context["open_escalation"] = resolved_packet
+        updated_context["current_state"] = resume_state
 
         outcome = option.get("outcome")
         if outcome is not None:

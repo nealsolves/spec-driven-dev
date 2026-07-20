@@ -26,6 +26,12 @@ class PolicyLifecycleTest(unittest.TestCase):
         self.engine = load_engine()
         self.bundle = self.engine.load_control_plane(ROOT)
 
+    def fresh_decision(self, bundle, context):
+        decision = self.engine.evaluate(bundle, context)
+        for record in context["evidence"].values():
+            record["hashes"] = copy.deepcopy(decision["hashes"])
+        return self.engine.evaluate(bundle, context)
+
     def context_with_evidence(
         self, *, state, workflow, required, action=None, bundle=None
     ):
@@ -47,10 +53,7 @@ class PolicyLifecycleTest(unittest.TestCase):
             }
             for name in required
         }
-        decision = self.engine.evaluate(bundle, context)
-        for record in context["evidence"].values():
-            record["hashes"] = copy.deepcopy(decision["hashes"])
-        decision = self.engine.evaluate(bundle, context)
+        decision = self.fresh_decision(bundle, context)
         self.assertTrue(
             all(record["hashes"] == decision["hashes"] for record in context["evidence"].values())
         )
@@ -188,6 +191,20 @@ class PolicyLifecycleTest(unittest.TestCase):
         self.assertEqual(exceptional, set(recoveries))
         self.assertTrue(all(isinstance(value, str) and value for value in recoveries.values()))
 
+    def test_escalation_packet_requires_a_normal_resume_state(self):
+        context = load_yaml("escalation-open.yaml")
+        self.assertEqual(self.engine._context_value_errors(self.bundle, context), [])
+
+        missing = copy.deepcopy(context)
+        del missing["open_escalation"]["resume_state"]
+        self.assertTrue(self.engine._context_value_errors(self.bundle, missing))
+
+        exceptional = copy.deepcopy(context)
+        exceptional["open_escalation"]["resume_state"] = "BLOCKED_POLICY"
+        self.assertTrue(
+            self.engine._context_value_errors(self.bundle, exceptional)
+        )
+
     def test_transition_rejects_stale_policy_context_and_change_decisions(self):
         context, decision = self.context_with_evidence(
             state="REVIEWING",
@@ -205,6 +222,47 @@ class PolicyLifecycleTest(unittest.TestCase):
         changed_bundle["project"]["project"]["name"] = "changed-project"
         with self.assertRaisesRegex(self.engine.PolicyInputError, "policy_hash"):
             self.engine.transition(changed_bundle, context, decision, "COMPLETE")
+
+    def test_transition_does_not_treat_evidence_as_human_authority_override(self):
+        bundle = copy.deepcopy(self.bundle)
+        bundle["project"]["instruction_system"]["module_state"] = "complete"
+        context, _ = self.context_with_evidence(
+            state="CONVERGING",
+            workflow="instruction_system",
+            required=["convergence_passed"],
+            bundle=bundle,
+        )
+        context["facts"] = {
+            "instruction_system_change": {
+                "value": True,
+                "source_type": "diff_analysis",
+                "source_ref": EVIDENCE_REF,
+                "extractor": "repository-fact-extractor-v1",
+                "confidence": 1.0,
+                "observed_at_change": context["change_hash"],
+                "corroboration": [],
+            }
+        }
+        decision = self.fresh_decision(bundle, context)
+        self.assertEqual(decision["authority"]["outcome"], "human_required")
+
+        with self.assertRaisesRegex(self.engine.PolicyInputError, "human_required"):
+            self.engine.transition(bundle, context, decision, "COMPLETE")
+
+        exhausted, _ = self.context_with_evidence(
+            state="REVIEWING",
+            workflow="maintenance",
+            required=["required_reviews_passed", "required_ci_passed"],
+        )
+        exhausted["resources"]["repair_attempts"] = 3
+        exhausted_decision = self.fresh_decision(self.bundle, exhausted)
+        self.assertEqual(
+            exhausted_decision["authority"]["outcome"], "human_required"
+        )
+        with self.assertRaisesRegex(self.engine.PolicyInputError, "human_required"):
+            self.engine.transition(
+                self.bundle, exhausted, exhausted_decision, "COMPLETE"
+            )
 
     def test_response_requires_schema_valid_current_decision_and_option(self):
         context, response, _ = self.open_escalation()
@@ -245,6 +303,24 @@ class PolicyLifecycleTest(unittest.TestCase):
         with self.assertRaisesRegex(self.engine.PolicyInputError, "action.*prohibited"):
             self.engine.respond(self.bundle, action_prohibited, prohibited_response)
 
+    def test_response_requires_human_decision_state_and_declared_recovery(self):
+        context, response, _ = self.open_escalation()
+        for state in ("CLASSIFIED", "BLOCKED_POLICY"):
+            with self.subTest(state=state):
+                wrong_state = copy.deepcopy(context)
+                wrong_state["current_state"] = state
+                with self.assertRaisesRegex(
+                    self.engine.PolicyInputError, "HUMAN_DECISION_REQUIRED"
+                ):
+                    self.engine.respond(self.bundle, wrong_state, response)
+
+        invalid_recovery = copy.deepcopy(self.bundle)
+        invalid_recovery["lifecycle"]["recoveries"][
+            "HUMAN_DECISION_REQUIRED"
+        ] = "manual_override"
+        with self.assertRaisesRegex(self.engine.PolicyInputError, "validated_response"):
+            self.engine.respond(invalid_recovery, context, response)
+
     def test_option_2_response_resolves_copy_records_conditions_and_reevaluates(self):
         context, response, current = self.open_escalation()
         original_context = copy.deepcopy(context)
@@ -259,11 +335,46 @@ class PolicyLifecycleTest(unittest.TestCase):
             updated["responses"][-1]["conditions"], ["retention_period_days=90"]
         )
         self.assertEqual(updated["clarifications"][0]["resolution"], "option_2")
+        self.assertEqual(updated["current_state"], "CLASSIFIED")
+        self.assertEqual(result["resolved_escalation"]["resume_state"], "CLASSIFIED")
         self.assertEqual(result["decision"]["escalations"], [])
         self.assertEqual(result["decision"]["authority"]["outcome"], "autonomous")
+        self.assertEqual(
+            result["decision"]["hashes"],
+            self.engine.evaluate(self.bundle, updated)["hashes"],
+        )
         self.assertNotEqual(result["decision"]["hashes"], current["hashes"])
         self.assertEqual(context, original_context)
         self.assertEqual(response, original_response)
+
+    def test_idless_material_clarification_round_trips_with_fallback_id(self):
+        context = load_yaml("escalation-open.yaml")
+        context["current_state"] = "CLASSIFIED"
+        context["open_escalation"] = None
+        del context["clarifications"][0]["id"]
+
+        initial = self.engine.evaluate(self.bundle, context)
+        self.assertEqual(
+            initial["escalations"][0]["decision"]["clarification_id"],
+            "clarification-1",
+        )
+        self.assertEqual(initial["escalations"][0]["resume_state"], "CLASSIFIED")
+
+        context["current_state"] = "HUMAN_DECISION_REQUIRED"
+        context["open_escalation"] = initial["escalations"][0]
+        current = self.engine.evaluate(self.bundle, context)
+        context["open_escalation"] = current["escalations"][0]
+        response = load_yaml("response-option-2.yaml")
+        response["decision_id"] = "DEC-retention-001-clarification-1"
+        response["hashes"] = current["hashes"]
+
+        result = self.engine.respond(self.bundle, context, response)
+
+        self.assertEqual(result["context"]["current_state"], "CLASSIFIED")
+        self.assertEqual(
+            result["context"]["clarifications"][0]["resolution"], "option_2"
+        )
+        self.assertEqual(result["decision"]["escalations"], [])
 
     def test_cli_transition_and_respond_preserve_json_and_output_contracts(self):
         context, decision = self.context_with_evidence(
