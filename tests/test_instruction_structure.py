@@ -287,7 +287,7 @@ WORKFLOW_TOPICS = {
     "instruction-system-change.md": (
         "prior trusted policy",
         "before and after",
-        "sensitive weakening",
+        "sensitive-weakening",
         "control-plane version increment",
         "cannot authorize itself",
         "human_required",
@@ -626,6 +626,27 @@ class InstructionStructureTest(unittest.TestCase):
         initialization = read(".claude/workflows/project-initialization.md")
         for path in leaf_paths(project):
             self.assertIn(f"`{path}`", initialization, f"missing project field {path}")
+
+    def test_workflows_preserve_mvp_responsibility_boundaries(self):
+        instruction_change = read(
+            ".claude/workflows/instruction-system-change.md"
+        ).lower()
+        self.assertIn(
+            "automated sensitive-weakening comparison is phase 2",
+            instruction_change,
+        )
+        self.assertIn("advisory evidence", instruction_change)
+        self.assertNotIn("this mvp comparison is table-based", instruction_change)
+
+        initialization = read(
+            ".claude/workflows/project-initialization.md"
+        ).lower()
+        self.assertIn("preserve explicit `unknown` values", initialization)
+        self.assertIn("reject unsupported keys", initialization)
+
+        feature = read(".claude/workflows/feature-development.md").lower()
+        self.assertIn("agent extracts observable facts", feature)
+        self.assertIn("engine classifies and routes", feature)
 
     def test_profiles_are_complete_and_distinguish_base_from_overlay(self):
         profile_root = ROOT / ".claude/profiles"

@@ -4,7 +4,7 @@
   "title": "Routing control plane",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schema_version", "always", "facts", "workflow_rules", "classification_rules", "overlay_rules", "routes"],
+  "required": ["schema_version", "always", "profile_paths", "facts", "workflow_rules", "classification_rules", "overlay_rules", "routes"],
   "properties": {
     "schema_version": {"const": 1},
     "always": {
@@ -13,6 +13,31 @@
       "required": ["rules"],
       "properties": {
         "rules": {"$ref": "#/$defs/rule_path_list"}
+      }
+    },
+    "profile_paths": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["base", "overlays"],
+      "properties": {
+        "base": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["solo", "team", "prototype"],
+          "properties": {
+            "solo": {"$ref": "#/$defs/profile_path"},
+            "team": {"$ref": "#/$defs/profile_path"},
+            "prototype": {"$ref": "#/$defs/profile_path"}
+          }
+        },
+        "overlays": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["regulated"],
+          "properties": {
+            "regulated": {"$ref": "#/$defs/profile_path"}
+          }
+        }
       }
     },
     "facts": {
@@ -57,6 +82,10 @@
     "workflow_path": {
       "type": "string",
       "pattern": "^workflows/[a-z0-9-]+\\.md$"
+    },
+    "profile_path": {
+      "type": "string",
+      "pattern": "^profiles/[a-z0-9-]+\\.md$"
     },
     "rule_path_list": {
       "type": "array",

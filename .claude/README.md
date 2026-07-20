@@ -41,7 +41,7 @@ plan; completed installations must contain every configured module path.
 | File | Responsibility |
 |---|---|
 | [`project.yaml`](project.yaml) | Identity, lifecycle, ownership, environments, data posture, project commands, overlays, financial limits, and remote/production permissions. |
-| [`routing.yaml`](routing.yaml) | Observable fact catalog, workflow selection, deterministic classifications, always-on rules, and additive module routes. |
+| [`routing.yaml`](routing.yaml) | Observable fact catalog, deterministic base/overlay profile paths, workflow selection, classifications, always-on rules, and additive module routes. |
 | [`policy.yaml`](policy.yaml) | Simple risk tiers, deny-overrides authority, clarifications, exceptions, reviews, and bounded resource limits. |
 | [`lifecycle.yaml`](lifecycle.yaml) | Normal and exceptional states, allowed transitions, evidence prerequisites, recoveries, and terminal paths. |
 

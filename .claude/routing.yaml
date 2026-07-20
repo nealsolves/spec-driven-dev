@@ -1,6 +1,13 @@
 schema_version: 1
 always:
   rules: [rules/engineering.md, rules/testing.md, rules/documentation.md]
+profile_paths:
+  base:
+    solo: profiles/solo-developer.md
+    team: profiles/team.md
+    prototype: profiles/prototype.md
+  overlays:
+    regulated: profiles/regulated.md
 facts:
   documentation_only: {type: boolean, material: false}
   modifies_runtime_code: {type: boolean, material: false}

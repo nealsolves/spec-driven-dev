@@ -132,6 +132,50 @@ class ControlPlaneContractsTest(unittest.TestCase):
         with self.assertRaises(jsonschema.ValidationError):
             validator.validate(routing)
 
+    def test_routing_declares_bounded_profile_paths(self):
+        routing = load_control_file("routing")
+
+        self.assertIn("profile_paths", routing)
+        self.assertEqual(
+            routing["profile_paths"],
+            {
+                "base": {
+                    "solo": "profiles/solo-developer.md",
+                    "team": "profiles/team.md",
+                    "prototype": "profiles/prototype.md",
+                },
+                "overlays": {"regulated": "profiles/regulated.md"},
+            },
+        )
+
+    def test_profile_paths_reject_unknown_keys_and_nonprofile_paths(self):
+        schema = load_schema("routing")
+        validator = jsonschema.Draft202012Validator(schema)
+        expected = {
+            "base": {
+                "solo": "profiles/solo-developer.md",
+                "team": "profiles/team.md",
+                "prototype": "profiles/prototype.md",
+            },
+            "overlays": {"regulated": "profiles/regulated.md"},
+        }
+        for mutation in (
+            lambda value: value["base"].update(
+                {"enterprise": "profiles/enterprise.md"}
+            ),
+            lambda value: value["overlays"].update(
+                {"regulated": "rules/compliance.md"}
+            ),
+        ):
+            with self.subTest(mutation=mutation):
+                routing = load_control_file("routing")
+                routing["profile_paths"] = expected.copy()
+                routing["profile_paths"]["base"] = expected["base"].copy()
+                routing["profile_paths"]["overlays"] = expected["overlays"].copy()
+                mutation(routing["profile_paths"])
+                with self.assertRaises(jsonschema.ValidationError):
+                    validator.validate(routing)
+
     def test_unconfigured_defaults_are_safe(self):
         project = yaml.safe_load((ROOT / ".claude/project.yaml").read_text())
         self.assertEqual(project["project"]["lifecycle"], "unconfigured")

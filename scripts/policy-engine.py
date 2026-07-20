@@ -534,6 +534,97 @@ def _markdown_reference_errors(bundle: dict[str, Any]) -> list[str]:
     return errors
 
 
+def _profile_reference_errors(bundle: dict[str, Any]) -> list[str]:
+    routing = bundle["routing"]
+    project = bundle["project"]
+    profile_paths = routing.get("profile_paths")
+    if not isinstance(profile_paths, dict):
+        return []
+    base_paths = profile_paths.get("base")
+    overlay_paths = profile_paths.get("overlays")
+    if not isinstance(base_paths, dict) or not isinstance(overlay_paths, dict):
+        return []
+
+    errors: list[str] = []
+    project_schema = bundle["schemas"]["project"]
+    try:
+        base_vocabulary = set(
+            project_schema["properties"]["delivery"]["properties"][
+                "base_profile"
+            ]["enum"]
+        )
+    except (KeyError, TypeError):
+        base_vocabulary = set()
+    missing_base = sorted(base_vocabulary - set(base_paths))
+    if missing_base:
+        errors.append(
+            _error(
+                "routing.profile_paths.base: missing project base profiles: "
+                + ", ".join(missing_base)
+            )
+        )
+
+    delivery = project.get("delivery")
+    if isinstance(delivery, dict):
+        selected_base = delivery.get("base_profile")
+        if isinstance(selected_base, str) and selected_base not in base_paths:
+            errors.append(
+                _error(
+                    "project.delivery.base_profile: unknown or unmapped base "
+                    f"profile {selected_base!r}"
+                )
+            )
+
+    overlay_rules = routing.get("overlay_rules")
+    overlay_rule_names: set[str] = set()
+    if isinstance(overlay_rules, list):
+        for index, rule in enumerate(overlay_rules):
+            if not isinstance(rule, dict):
+                continue
+            overlay = rule.get("overlay")
+            if not isinstance(overlay, str):
+                continue
+            overlay_rule_names.add(overlay)
+            if overlay not in overlay_paths:
+                errors.append(
+                    _error(
+                        f"routing.overlay_rules[{index}].overlay: missing "
+                        f"profile mapping for {overlay!r}"
+                    )
+                )
+
+    if isinstance(delivery, dict) and isinstance(delivery.get("overlays"), list):
+        for overlay in delivery["overlays"]:
+            if not isinstance(overlay, str):
+                continue
+            if overlay not in overlay_paths or overlay not in overlay_rule_names:
+                errors.append(
+                    _error(
+                        "project.delivery.overlays: unknown or unmapped overlay "
+                        f"{overlay!r}"
+                    )
+                )
+
+    module_state = project.get("instruction_system", {}).get("module_state")
+    namespace_root = bundle["root"] / ".claude/profiles"
+    namespace_is_enforced = module_state == "complete" or namespace_root.is_dir()
+    if namespace_is_enforced:
+        references = list(base_paths.values()) + list(overlay_paths.values())
+        seen: set[str] = set()
+        for reference in references:
+            if not isinstance(reference, str) or reference in seen:
+                continue
+            seen.add(reference)
+            if not (bundle["root"] / ".claude" / reference).is_file():
+                errors.append(
+                    _error(
+                        "routing profile path does not exist: "
+                        f".claude/{reference}"
+                    )
+                )
+    return errors
+
+
 def _vocabulary_errors(bundle: dict[str, Any]) -> list[str]:
     context_properties = bundle["schemas"]["context"].get("properties")
     if not isinstance(context_properties, dict):
@@ -732,6 +823,7 @@ def validate_bundle(root: Path, context_path: Path | None) -> list[str]:
         errors = _control_schema_errors(bundle)
         errors.extend(_routing_reference_errors(bundle))
         errors.extend(_markdown_reference_errors(bundle))
+        errors.extend(_profile_reference_errors(bundle))
         errors.extend(_vocabulary_errors(bundle))
         errors.extend(_lifecycle_errors(bundle))
         if context_path is not None:
@@ -761,6 +853,7 @@ def _raise_evaluation_errors(errors: Iterable[str]) -> None:
 def _evaluation_configuration_errors(bundle: dict[str, Any]) -> list[str]:
     errors = _control_schema_errors(bundle)
     errors.extend(_routing_reference_errors(bundle))
+    errors.extend(_profile_reference_errors(bundle))
     errors.extend(_vocabulary_errors(bundle))
     errors.extend(_lifecycle_errors(bundle))
     return errors
@@ -887,6 +980,15 @@ def _evaluate_routing(
         _append_unique(modules, route.get("rules", []))
         _append_unique(workflows, route.get("workflows", []))
     return classifications, modules, workflows
+
+
+def _evaluate_profiles(bundle: dict[str, Any]) -> list[str]:
+    delivery = bundle["project"]["delivery"]
+    paths = bundle["routing"]["profile_paths"]
+    profiles = [paths["base"][delivery["base_profile"]]]
+    for overlay in delivery["overlays"]:
+        _append_unique(profiles, [paths["overlays"][overlay]])
+    return profiles
 
 
 def _evaluate_risk(
@@ -1365,6 +1467,7 @@ def evaluate(
         classifications, modules, workflows = _evaluate_routing(
             bundle, context, fact_values
         )
+        profiles = _evaluate_profiles(bundle)
         risk = _evaluate_risk(bundle, fact_values)
         hashes = _decision_hashes(bundle, context)
         clarifications, escalations = _evaluate_clarifications(
@@ -1387,6 +1490,7 @@ def evaluate(
             "valid": True,
             "change_id": context["change_id"],
             "classifications": classifications,
+            "profiles": profiles,
             "modules": modules,
             "workflows": workflows,
             "risk": risk,

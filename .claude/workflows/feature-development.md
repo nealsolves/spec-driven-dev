@@ -29,8 +29,9 @@
 
 ## Ordered steps
 
-1. Read the constitution, classify observable facts, validate context, run
-   evaluation, load routed modules, and transition to `CLASSIFIED`.
+1. Read the constitution. The agent extracts observable facts with provenance;
+   the engine classifies and routes them. Validate context, run evaluation,
+   load the returned profiles/modules/workflows, and transition to `CLASSIFIED`.
 2. **Specify** user outcomes, acceptance criteria, boundaries, failure behavior,
    data use, operational consequences, and non-goals without choosing accidental
    implementation details. Transition to `SPECIFIED` when `spec_complete`.

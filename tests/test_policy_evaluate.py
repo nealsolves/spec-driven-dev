@@ -102,6 +102,7 @@ class PolicyEvaluationTest(unittest.TestCase):
             result["workflows"],
             ["workflows/feature-development.md", "workflows/release.md"],
         )
+        self.assertEqual(result["profiles"], ["profiles/solo-developer.md"])
 
     def test_regulated_project_overlay_routes_declared_controls(self):
         bundle = copy.deepcopy(self.bundle)
@@ -113,6 +114,10 @@ class PolicyEvaluationTest(unittest.TestCase):
 
         self.assertEqual(
             result["classifications"], ["documentation_only", "regulated_scope"]
+        )
+        self.assertEqual(
+            result["profiles"],
+            ["profiles/solo-developer.md", "profiles/regulated.md"],
         )
         self.assertIn("rules/compliance.md", result["modules"])
         self.assertIn("rules/ownership.md", result["modules"])

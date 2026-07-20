@@ -1,5 +1,6 @@
 import hashlib
 import json
+import shutil
 import subprocess
 import sys
 import unittest
@@ -167,6 +168,98 @@ class PolicyValidationTest(unittest.TestCase):
         )
         self.assertIn(
             "ERROR: routing markdown path does not exist: .claude/workflows/maintenance.md",
+            errors,
+        )
+
+    def test_complete_state_fails_when_a_module_namespace_is_deleted(self):
+        cases = (
+            ("rules", "routing markdown path does not exist: .claude/rules/"),
+            ("workflows", "routing markdown path does not exist: .claude/workflows/"),
+            ("profiles", "routing profile path does not exist: .claude/profiles/"),
+        )
+        for namespace, expected in cases:
+            with self.subTest(namespace=namespace), temporary_repository() as root:
+                shutil.rmtree(root / ".claude" / namespace)
+
+                errors = self.engine.validate_bundle(root, None)
+
+                self.assertTrue(
+                    any(expected in error for error in errors),
+                    errors,
+                )
+
+    def test_profile_base_mapping_covers_project_schema_vocabulary(self):
+        with temporary_repository() as root:
+            routing_path = root / ".claude/routing.yaml"
+            routing = yaml.safe_load(routing_path.read_text())
+            routing.setdefault("profile_paths", {}).setdefault("base", {}).pop(
+                "team", None
+            )
+            routing_path.write_text(yaml.safe_dump(routing, sort_keys=False))
+
+            errors = self.engine.validate_bundle(root, None)
+
+        self.assertIn(
+            "ERROR: routing.profile_paths.base: missing project base profiles: team",
+            errors,
+        )
+
+    def test_selected_overlay_must_be_known_and_mapped(self):
+        with temporary_repository() as root:
+            project_path = root / ".claude/project.yaml"
+            project = yaml.safe_load(project_path.read_text())
+            project["delivery"]["overlays"] = ["regulatted"]
+            project_path.write_text(yaml.safe_dump(project, sort_keys=False))
+
+            errors = self.engine.validate_bundle(root, None)
+
+        self.assertIn(
+            "ERROR: project.delivery.overlays: unknown or unmapped overlay 'regulatted'",
+            errors,
+        )
+
+    def test_overlay_rule_requires_profile_mapping(self):
+        with temporary_repository() as root:
+            routing_path = root / ".claude/routing.yaml"
+            routing = yaml.safe_load(routing_path.read_text())
+            routing.setdefault("profile_paths", {}).setdefault("overlays", {}).pop(
+                "regulated", None
+            )
+            routing_path.write_text(yaml.safe_dump(routing, sort_keys=False))
+
+            errors = self.engine.validate_bundle(root, None)
+
+        self.assertIn(
+            "ERROR: routing.overlay_rules[0].overlay: missing profile mapping for 'regulated'",
+            errors,
+        )
+
+    def test_mapped_profile_file_must_exist(self):
+        with temporary_repository() as root:
+            (root / ".claude/profiles/regulated.md").unlink()
+
+            errors = self.engine.validate_bundle(root, None)
+
+        self.assertIn(
+            "ERROR: routing profile path does not exist: .claude/profiles/regulated.md",
+            errors,
+        )
+
+    def test_malformed_profile_path_remains_an_actionable_schema_error(self):
+        with temporary_repository() as root:
+            routing_path = root / ".claude/routing.yaml"
+            routing = yaml.safe_load(routing_path.read_text())
+            routing["profile_paths"]["base"]["solo"] = ["profiles/solo-developer.md"]
+            routing_path.write_text(yaml.safe_dump(routing, sort_keys=False))
+
+            errors = self.engine.validate_bundle(root, None)
+
+        self.assertTrue(
+            any("routing.profile_paths.base.solo" in error for error in errors),
+            errors,
+        )
+        self.assertFalse(
+            any("invalid control-plane structure" in error for error in errors),
             errors,
         )
 

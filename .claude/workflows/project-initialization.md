@@ -52,7 +52,8 @@ The initialization record accounts for every leaf field:
 ## Ordered steps
 
 1. Assign a stable initialization change ID and snapshot the current four
-   control files without discarding unknown keys or values.
+   control files. Preserve explicit `unknown` values and reject unsupported keys
+   through schema validation; an unknown key is not an extensibility mechanism.
 2. Record project identity (`project.name`), repository target
    (`project.repository` and `remote_actions.repository`), and intended project
    lifecycle. Verify that repository identifiers refer to the same target.
