@@ -224,6 +224,17 @@ class PolicyLifecycleTest(unittest.TestCase):
                     bundle["project"]["data"].update(
                         {"classifications": ["internal"], "regulated_data": "none"}
                     )
+                    bundle["project"]["commands"] = {
+                        name: "not_applicable"
+                        for name in bundle["project"]["commands"]
+                    }
+                    bundle["project"]["spec_kit"].update(
+                        {
+                            "enabled": False,
+                            "tested_version": "not_applicable",
+                            "minimum_version": "not_applicable",
+                        }
+                    )
                     bundle["project"]["environments"]["configured"] = ["production"]
                     bundle["project"]["remote_actions"]["repository"] = "owner/repository"
                     bundle["project"]["production_actions"].update(
@@ -232,6 +243,8 @@ class PolicyLifecycleTest(unittest.TestCase):
                             "target": "production",
                             "deploy": True,
                             "rollback": True,
+                            "deploy_command": "deploy-tool production",
+                            "rollback_command": "deploy-tool rollback production",
                         }
                     )
                 context, decision = self.context_with_evidence(

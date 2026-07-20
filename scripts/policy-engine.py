@@ -696,9 +696,16 @@ def _is_unresolved_project_value(value: Any) -> bool:
     if not isinstance(value, str) or not value.strip():
         return True
     normalized = value.strip().casefold()
-    return normalized == "unknown" or (
+    return normalized in {"unknown", "not_applicable"} or (
         normalized.startswith("<") and normalized.endswith(">")
     )
+
+
+def _is_resolved_or_not_applicable(value: Any) -> bool:
+    if not isinstance(value, str) or not value.strip():
+        return False
+    normalized = value.strip().casefold()
+    return normalized == "not_applicable" or not _is_unresolved_project_value(value)
 
 
 def _parent_permission_errors(project: dict[str, Any]) -> list[str]:
@@ -746,6 +753,10 @@ def _configured_project_errors(bundle: dict[str, Any]) -> list[str]:
     production = production if isinstance(production, dict) else {}
     environments = project.get("environments")
     environments = environments if isinstance(environments, dict) else {}
+    commands = project.get("commands")
+    commands = commands if isinstance(commands, dict) else {}
+    spec_kit = project.get("spec_kit")
+    spec_kit = spec_kit if isinstance(spec_kit, dict) else {}
 
     errors = _parent_permission_errors(project)
     required_values = (
@@ -764,10 +775,34 @@ def _configured_project_errors(bundle: dict[str, Any]) -> list[str]:
             "project.data.regulated_data",
             data.get("regulated_data"),
         ),
+        (
+            "project.spec_kit.design_reference",
+            spec_kit.get("design_reference"),
+        ),
     )
     for label, value in required_values:
         if _is_unresolved_project_value(value):
             errors.append(_error(f"{label}: configured project value must be resolved"))
+
+    for name in ("install", "test", "lint", "typecheck", "build", "release"):
+        if not _is_resolved_or_not_applicable(commands.get(name)):
+            errors.append(
+                _error(
+                    f"project.commands.{name}: configured project command must "
+                    "be concrete or not_applicable"
+                )
+            )
+
+    for name in ("tested_version", "minimum_version"):
+        value = spec_kit.get(name)
+        if spec_kit.get("enabled") is True:
+            invalid = _is_unresolved_project_value(value)
+            requirement = "must be concrete when Spec Kit is enabled"
+        else:
+            invalid = not _is_resolved_or_not_applicable(value)
+            requirement = "must be concrete or not_applicable when Spec Kit is disabled"
+        if invalid:
+            errors.append(_error(f"project.spec_kit.{name}: {requirement}"))
 
     classifications = data.get("classifications")
     if not isinstance(classifications, list) or not classifications or any(
@@ -835,6 +870,14 @@ def _configured_project_errors(bundle: dict[str, Any]) -> list[str]:
                     "requires rollback permission"
                 )
             )
+        for name in ("deploy_command", "rollback_command"):
+            if _is_unresolved_project_value(production.get(name)):
+                errors.append(
+                    _error(
+                        f"project.production_actions.{name}: production authority "
+                        "requires a concrete mechanism"
+                    )
+                )
     return errors
 
 
@@ -1606,6 +1649,14 @@ def _project_authority_outcomes(
                     "source": "project",
                     "outcome": "prohibited",
                     "rule": "remote_actions_disabled",
+                }
+            )
+        if action == "create_release" and project["commands"]["release"] == "not_applicable":
+            outcomes.append(
+                {
+                    "source": "project",
+                    "outcome": "prohibited",
+                    "rule": "release_command_not_applicable",
                 }
             )
     if action == "deploy_production":

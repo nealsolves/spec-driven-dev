@@ -103,14 +103,20 @@ The project-initialization workflow must derive or collect project identity,
 repository, lifecycle, environments, install/test/lint/typecheck/build/release
 commands, data classes, authority, financial limits, overlays, deployment and
 rollback mechanisms, Spec Kit version, escalation owner, and external
-obligations. Preserve any unresolved value as `unknown`.
+obligations. Preserve any unresolved value as `unknown`. Use the exact
+`not_applicable` sentinel, with evidence, only for a repository command or
+disabled Spec Kit version that genuinely does not apply; it never authorizes an
+action that relies on that command.
 
 Changing lifecycle to `configured` is accepted only after permission-bearing
 identity, ownership, repository targets, and data posture are concrete. Parent
-authority switches must agree with child permissions; production authority also
-requires a configured target environment and rollback permission. Incomplete
-configured profiles fail validation and evaluation rather than inheriting an
-autonomous action-matrix result.
+authority switches must agree with child permissions. All command entries and
+Spec Kit compatibility values must be resolved before configuration. Production
+authority also requires a configured target environment, rollback permission,
+and concrete `production_actions.deploy_command` and
+`production_actions.rollback_command` mechanisms. Incomplete configured
+profiles fail validation and evaluation rather than inheriting an autonomous
+action-matrix result.
 
 Until initialization validates, policy prohibits push, merge, release,
 deployment, and autonomous risk exceptions. Local specification, implementation,
@@ -166,8 +172,10 @@ Spec Kit v0.13.0 is the approved design reference for the specification
 lifecycle; see [GitHub Spec Kit](https://github.com/github/spec-kit). This is not a claim that
 v0.13.0 is the latest release or that the uninstantiated template has completed
 compatibility testing. `project.yaml` records tested and minimum versions as
-`unknown` until initialization verifies them. Equivalent manual artifacts and
-gates are allowed when an installed integration lacks a referenced command.
+`unknown` until initialization verifies them. When Spec Kit is disabled, both
+may be explicitly `not_applicable`; enabled compatibility requires concrete
+tested and minimum versions. Equivalent manual artifacts and gates are allowed
+when an installed integration lacks a referenced command.
 
 ## Legacy Manifest Mapping
 

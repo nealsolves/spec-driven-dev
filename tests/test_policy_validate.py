@@ -126,6 +126,67 @@ class PolicyValidationTest(unittest.TestCase):
             with self.subTest(field=field):
                 self.assertTrue(any(field in error for error in errors), errors)
 
+    def test_configured_project_requires_resolved_commands_and_enabled_spec_kit_versions(self):
+        with temporary_repository() as root:
+            project_path = root / ".claude/project.yaml"
+            project = yaml.safe_load(project_path.read_text())
+            project["project"].update(
+                {"name": "delivery-template", "repository": "owner/repository", "lifecycle": "configured"}
+            )
+            project["delivery"].update(
+                {"owner": "owner@example.com", "escalation_owner": "owner@example.com"}
+            )
+            project["data"].update(
+                {"classifications": ["internal"], "regulated_data": "none"}
+            )
+            project["remote_actions"]["repository"] = "owner/repository"
+            project_path.write_text(yaml.safe_dump(project, sort_keys=False))
+
+            errors = self.engine.validate_bundle(root, None)
+
+        for field in (
+            "project.commands.install",
+            "project.commands.test",
+            "project.commands.lint",
+            "project.commands.typecheck",
+            "project.commands.build",
+            "project.commands.release",
+            "project.spec_kit.tested_version",
+            "project.spec_kit.minimum_version",
+        ):
+            with self.subTest(field=field):
+                self.assertTrue(any(field in error for error in errors), errors)
+
+    def test_configured_project_accepts_explicitly_inapplicable_commands_and_spec_kit(self):
+        with temporary_repository() as root:
+            project_path = root / ".claude/project.yaml"
+            project = yaml.safe_load(project_path.read_text())
+            project["project"].update(
+                {"name": "delivery-template", "repository": "owner/repository", "lifecycle": "configured"}
+            )
+            project["delivery"].update(
+                {"owner": "owner@example.com", "escalation_owner": "owner@example.com"}
+            )
+            project["data"].update(
+                {"classifications": ["internal"], "regulated_data": "none"}
+            )
+            project["remote_actions"]["repository"] = "owner/repository"
+            project["commands"] = {
+                name: "not_applicable" for name in project["commands"]
+            }
+            project["spec_kit"].update(
+                {
+                    "enabled": False,
+                    "tested_version": "not_applicable",
+                    "minimum_version": "not_applicable",
+                }
+            )
+            project_path.write_text(yaml.safe_dump(project, sort_keys=False))
+
+            errors = self.engine.validate_bundle(root, None)
+
+        self.assertEqual(errors, [])
+
     def test_malformed_configured_nested_sections_fail_without_exception(self):
         with temporary_repository() as root:
             project_path = root / ".claude/project.yaml"
@@ -164,6 +225,54 @@ class PolicyValidationTest(unittest.TestCase):
         self.assertTrue(any("production_actions.target" in error for error in errors), errors)
         self.assertTrue(any("production_actions.rollback" in error for error in errors), errors)
         self.assertTrue(any("environments.configured" in error for error in errors), errors)
+
+    def test_configured_production_authority_requires_concrete_deploy_and_rollback_commands(self):
+        with temporary_repository() as root:
+            project_path = root / ".claude/project.yaml"
+            project = yaml.safe_load(project_path.read_text())
+            project["project"].update(
+                {"name": "delivery-template", "repository": "owner/repository", "lifecycle": "configured"}
+            )
+            project["delivery"].update(
+                {"owner": "owner@example.com", "escalation_owner": "owner@example.com"}
+            )
+            project["data"].update(
+                {"classifications": ["internal"], "regulated_data": "none"}
+            )
+            project["commands"] = {
+                name: "not_applicable" for name in project["commands"]
+            }
+            project["spec_kit"].update(
+                {
+                    "enabled": False,
+                    "tested_version": "not_applicable",
+                    "minimum_version": "not_applicable",
+                }
+            )
+            project["environments"]["configured"] = ["production"]
+            project["remote_actions"]["repository"] = "owner/repository"
+            project["production_actions"].update(
+                {
+                    "enabled": True,
+                    "target": "production",
+                    "deploy": True,
+                    "rollback": True,
+                    "deploy_command": "unknown",
+                    "rollback_command": "not_applicable",
+                }
+            )
+            project_path.write_text(yaml.safe_dump(project, sort_keys=False))
+
+            errors = self.engine.validate_bundle(root, None)
+
+        self.assertTrue(
+            any("production_actions.deploy_command" in error and "concrete" in error for error in errors),
+            errors,
+        )
+        self.assertTrue(
+            any("production_actions.rollback_command" in error and "concrete" in error for error in errors),
+            errors,
+        )
 
     def test_unknown_top_level_control_key_fails_actionably(self):
         with temporary_repository() as root:

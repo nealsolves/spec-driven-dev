@@ -462,6 +462,89 @@ class PolicyEvaluationTest(unittest.TestCase):
             )
         )
 
+    def test_configured_unresolved_commands_and_spec_kit_fail_before_publication_authority(self):
+        for action in ("push_branch", "create_release", "deploy_production"):
+            with self.subTest(action=action):
+                bundle = copy.deepcopy(self.bundle)
+                project = bundle["project"]
+                project["project"].update(
+                    {"name": "delivery-template", "repository": "owner/repository", "lifecycle": "configured"}
+                )
+                project["delivery"].update(
+                    {"owner": "owner@example.com", "escalation_owner": "owner@example.com"}
+                )
+                project["data"].update(
+                    {"classifications": ["internal"], "regulated_data": "none"}
+                )
+                project["remote_actions"].update(
+                    {
+                        "enabled": True,
+                        "repository": "owner/repository",
+                        "push_branch": True,
+                        "create_release": True,
+                    }
+                )
+                if action == "deploy_production":
+                    project["environments"]["configured"] = ["production"]
+                    project["production_actions"].update(
+                        {
+                            "enabled": True,
+                            "target": "production",
+                            "deploy": True,
+                            "rollback": True,
+                        }
+                    )
+                context = load_context("maintenance-low.yaml")
+                context["action"] = action
+
+                with self.assertRaisesRegex(
+                    self.engine.PolicyInputError,
+                    "commands|spec_kit",
+                ):
+                    self.engine.evaluate(bundle, context)
+
+    def test_not_applicable_release_command_cannot_authorize_release(self):
+        bundle = copy.deepcopy(self.bundle)
+        project = bundle["project"]
+        project["project"].update(
+            {"name": "delivery-template", "repository": "owner/repository", "lifecycle": "configured"}
+        )
+        project["delivery"].update(
+            {"owner": "owner@example.com", "escalation_owner": "owner@example.com"}
+        )
+        project["data"].update(
+            {"classifications": ["internal"], "regulated_data": "none"}
+        )
+        project["commands"] = {
+            name: "not_applicable" for name in project["commands"]
+        }
+        project["spec_kit"].update(
+            {
+                "enabled": False,
+                "tested_version": "not_applicable",
+                "minimum_version": "not_applicable",
+            }
+        )
+        project["remote_actions"].update(
+            {
+                "enabled": True,
+                "repository": "owner/repository",
+                "create_release": True,
+            }
+        )
+        context = load_context("maintenance-low.yaml")
+        context["action"] = "create_release"
+
+        result = self.engine.evaluate(bundle, context)
+
+        self.assertEqual(result["authority"]["outcome"], "prohibited")
+        self.assertTrue(
+            any(
+                item["rule"] == "release_command_not_applicable"
+                for item in result["authority"]["applicable"]
+            )
+        )
+
     def test_deny_overrides_selects_most_restrictive_outcome(self):
         context = load_context("maintenance-low.yaml")
         context["authority_constraints"] = [
@@ -557,6 +640,16 @@ class PolicyEvaluationTest(unittest.TestCase):
         )
         bundle["project"]["data"].update(
             {"classifications": ["internal"], "regulated_data": "none"}
+        )
+        bundle["project"]["commands"] = {
+            name: "not_applicable" for name in bundle["project"]["commands"]
+        }
+        bundle["project"]["spec_kit"].update(
+            {
+                "enabled": False,
+                "tested_version": "not_applicable",
+                "minimum_version": "not_applicable",
+            }
         )
         bundle["project"]["remote_actions"]["repository"] = "owner/repository"
         context = load_context("maintenance-low.yaml")

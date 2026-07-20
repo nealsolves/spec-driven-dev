@@ -30,7 +30,7 @@ The initialization record accounts for every leaf field:
 | Data | `data.classifications`, `data.regulated_data`, `data.production_data_in_nonproduction` |
 | Environments | `environments.configured` |
 | Remote | `remote_actions.enabled`, `remote_actions.repository`, `remote_actions.push_branch`, `remote_actions.open_pull_request`, `remote_actions.update_pull_request`, `remote_actions.merge_pull_request`, `remote_actions.create_release` |
-| Production | `production_actions.enabled`, `production_actions.target`, `production_actions.deploy`, `production_actions.rollback` |
+| Production | `production_actions.enabled`, `production_actions.target`, `production_actions.deploy`, `production_actions.rollback`, `production_actions.deploy_command`, `production_actions.rollback_command` |
 | Financial | `financial_limits.currency`, `financial_limits.autonomous_spend` |
 | Obligations | `external_obligations` |
 
@@ -64,8 +64,10 @@ The initialization record accounts for every leaf field:
    version, minimum version, and whether equivalent manual gates are allowed.
    A design reference is not proof of compatibility.
 5. Derive the install, test, lint, typecheck, build, and release commands from
-   executable repository configuration. Preserve `unknown` when a command does
-   not exist; do not create a plausible command merely to pass initialization.
+   executable repository configuration. Use `not_applicable` with evidence when
+   a command genuinely does not exist; preserve `unknown` only while unresolved,
+   and do not create a plausible command merely to pass initialization. An
+   action that needs a `not_applicable` command remains prohibited.
 6. Record data classifications, whether regulated data is present, and the
    prohibition or explicit policy for production data in non-production.
 7. Enumerate allowed environments. For each production target, identify the
@@ -73,7 +75,8 @@ The initialization record accounts for every leaf field:
    not exist, keep production permissions disabled.
 8. Set remote-action permissions individually: enablement, branch push, pull
    request creation/update/merge, and release creation. Then set production
-   permissions individually: enablement, target, deploy, and rollback.
+   permissions individually: enablement, target, deploy, rollback, and concrete
+   deploy and rollback commands.
 9. Record currency and autonomous financial limits. Zero is the safe default;
    an unknown or unbounded financial commitment cannot be autonomous.
 10. Record external obligations, including legal, contractual, regulatory,
@@ -96,8 +99,10 @@ The initialization record accounts for every leaf field:
 
 ## Exit criteria
 
-- Every project field is populated with supported evidence or deliberately
-  preserved as `unknown`.
+- Every configured project command is concrete or evidenced as
+  `not_applicable`; enabled Spec Kit versions and enabled production mechanisms
+  are concrete. Any remaining authoritative `unknown` keeps the lifecycle
+  unconfigured.
 - A configured lifecycle is schema-valid and contains no unresolved value that
   could broaden authority; otherwise the repository safely remains unconfigured.
 - Remote or production actions are still disabled unless their exact mechanisms,

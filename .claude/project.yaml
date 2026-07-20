@@ -43,6 +43,8 @@ production_actions:
   target: unknown
   deploy: false
   rollback: false
+  deploy_command: unknown
+  rollback_command: unknown
 financial_limits:
   currency: unknown
   autonomous_spend: 0

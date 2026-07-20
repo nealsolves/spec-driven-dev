@@ -238,6 +238,8 @@ class ControlPlaneContractsTest(unittest.TestCase):
         )
         self.assertFalse(project["remote_actions"]["enabled"])
         self.assertFalse(project["production_actions"]["enabled"])
+        self.assertEqual(project["production_actions"]["deploy_command"], "unknown")
+        self.assertEqual(project["production_actions"]["rollback_command"], "unknown")
 
 
 if __name__ == "__main__":

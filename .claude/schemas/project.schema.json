@@ -124,12 +124,14 @@
     "production_actions": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["enabled", "target", "deploy", "rollback"],
+      "required": ["enabled", "target", "deploy", "rollback", "deploy_command", "rollback_command"],
       "properties": {
         "enabled": {"type": "boolean"},
         "target": {"type": "string", "minLength": 1},
         "deploy": {"type": "boolean"},
-        "rollback": {"type": "boolean"}
+        "rollback": {"type": "boolean"},
+        "deploy_command": {"type": "string", "minLength": 1},
+        "rollback_command": {"type": "string", "minLength": 1}
       }
     },
     "financial_limits": {

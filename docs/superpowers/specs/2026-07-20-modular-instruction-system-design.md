@@ -285,6 +285,11 @@ remote_actions:
   enabled: false
 production_actions:
   enabled: false
+  target: unknown
+  deploy: false
+  rollback: false
+  deploy_command: unknown
+  rollback_command: unknown
 ```
 
 Until initialization passes, local specification, design, implementation,
@@ -292,10 +297,14 @@ testing, and review are allowed. Push, merge, release, deployment, and autonomou
 risk exceptions are prohibited.
 
 Changing lifecycle to `configured` fails unless project and repository identity,
-owner and escalation owner, repository targets, and data posture are resolved.
-Child permissions cannot be true while their parent switch is false. Enabled
-production authority additionally requires a concrete configured target and
-rollback permission. Validation and evaluation apply the same semantic gate.
+owner and escalation owner, repository targets, data posture, every repository
+command, and Spec Kit compatibility are resolved. `not_applicable` is permitted
+only for a command that genuinely does not exist and for versions when Spec Kit
+is disabled; an action cannot rely on an inapplicable command. Child permissions
+cannot be true while their parent switch is false. Enabled production authority
+additionally requires a concrete configured target, rollback permission, and
+concrete deploy and rollback commands. Validation and evaluation apply the same
+semantic gate.
 
 `workflows/project-initialization.md` derives or collects project identity,
 repository, lifecycle, environments, known install/test/lint/typecheck/build

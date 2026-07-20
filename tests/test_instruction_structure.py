@@ -869,6 +869,9 @@ class InstructionStructureTest(unittest.TestCase):
         self.assertIn("MVP", guide)
         self.assertIn("Phase 2", guide)
         self.assertIn("Deferred", guide)
+        self.assertIn("not_applicable", guide)
+        self.assertIn("deploy_command", guide)
+        self.assertIn("rollback_command", guide)
         for old, new in (
             ("instructions.yaml + classification-rules.yaml", "routing.yaml"),
             ("project-profile.yaml", "project.yaml"),
