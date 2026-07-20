@@ -711,83 +711,7 @@ git commit -m "feat(policy): enforce lifecycle and responses"
 
 ---
 
-### Task 5: Add the authoritative validator and negative fixtures
-
-**Files:**
-- Create: `scripts/validate-instructions.sh`
-- Create: `scripts/validate-feature-context.sh`
-- Create: `tests/test_validator_cli.py`
-
-**Interfaces:**
-- Consumes: `policy-engine validate`, required-file lists, root contract requirements.
-- Produces: portable shell entry points with actionable exit status.
-
-- [ ] **Step 1: Write failing CLI integration tests**
-
-Use temporary copies to assert success on the repository, failure on a missing
-rule, failure when `CLAUDE.md` exceeds 350 lines, failure on a broken local link,
-failure on unsafe project defaults, and feature-context validation through the
-compatibility wrapper.
-
-- [ ] **Step 2: Run and observe missing-script failure**
-
-```bash
-.venv/bin/python -m unittest tests.test_validator_cli -v
-```
-
-- [ ] **Step 3: Implement the primary validator**
-
-Start with:
-
-```bash
-#!/usr/bin/env bash
-set -uo pipefail
-
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
-PYTHON="${POLICY_PYTHON:-$ROOT/.venv/bin/python}"
-if [[ ! -x "$PYTHON" ]]; then PYTHON="$(command -v python3 || true)"; fi
-```
-
-Check Python availability, call `policy-engine.py validate --root "$ROOT"`,
-check the root line limit, required lifecycle terms, required CI-authoritative
-wording, local Markdown links, all required modules/templates/profiles, script
-executable bits, solo one-person wording, and regulated override wording. Print
-`ERROR:`, `WARNING:`, and one final success line. Exit non-zero on any error.
-
-- [ ] **Step 4: Implement the thin compatibility wrapper**
-
-```bash
-#!/usr/bin/env bash
-set -uo pipefail
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
-if [[ $# -ne 1 ]]; then
-  echo "Usage: scripts/validate-feature-context.sh <feature-directory>" >&2
-  exit 2
-fi
-exec "$ROOT/scripts/validate-instructions.sh" --context "$1/instruction-context.yaml"
-```
-
-Add `--context` forwarding to the primary validator.
-
-- [ ] **Step 5: Mark scripts executable and run tests**
-
-```bash
-chmod +x scripts/validate-instructions.sh scripts/validate-feature-context.sh scripts/policy-engine.py
-.venv/bin/python -m unittest tests.test_validator_cli -v
-```
-
-Expected: integration tests PASS.
-
-- [ ] **Step 6: Commit**
-
-```bash
-git add scripts tests/test_validator_cli.py
-git commit -m "feat(validation): enforce instruction contracts"
-```
-
----
-
-### Task 6: Rewrite the compact root kernel and operating guide
+### Task 5: Rewrite the compact root kernel and operating guide
 
 **Files:**
 - Modify: `CLAUDE.md`
@@ -861,7 +785,7 @@ Expected: structure tests PASS; root line count ≤350.
 
 ---
 
-### Task 7: Add the twelve focused rule modules
+### Task 6: Add the twelve focused rule modules
 
 **Files:**
 - Create: `.claude/rules/engineering.md`
@@ -989,7 +913,7 @@ git commit -m "docs(rules): add proportional delivery controls"
 
 ---
 
-### Task 8: Add workflows, profiles, and reusable evidence templates
+### Task 7: Add workflows, profiles, and reusable evidence templates
 
 **Files:**
 - Create: `.claude/workflows/project-initialization.md`
@@ -1174,6 +1098,82 @@ validation/review evidence, rollback, hashes, authority, and PR link.
 .venv/bin/python -m unittest tests.test_instruction_structure -v
 git add .claude/workflows .claude/profiles .claude/templates tests/test_instruction_structure.py
 git commit -m "docs(workflows): add autonomous delivery playbooks"
+```
+
+---
+
+### Task 8: Add the authoritative validator and negative fixtures
+
+**Files:**
+- Create: `scripts/validate-instructions.sh`
+- Create: `scripts/validate-feature-context.sh`
+- Create: `tests/test_validator_cli.py`
+
+**Interfaces:**
+- Consumes: `policy-engine validate`, completed Markdown structure, and root contract requirements.
+- Produces: portable shell entry points with actionable exit status.
+
+- [ ] **Step 1: Write failing CLI integration tests**
+
+Use temporary copies to assert success on the repository, failure on a missing
+rule, failure when `CLAUDE.md` exceeds 350 lines, failure on a broken local link,
+failure on unsafe project defaults, and feature-context validation through the
+compatibility wrapper.
+
+- [ ] **Step 2: Run and observe missing-script failure**
+
+```bash
+.venv/bin/python -m unittest tests.test_validator_cli -v
+```
+
+- [ ] **Step 3: Implement the primary validator**
+
+Start with:
+
+```bash
+#!/usr/bin/env bash
+set -uo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
+PYTHON="${POLICY_PYTHON:-$ROOT/.venv/bin/python}"
+if [[ ! -x "$PYTHON" ]]; then PYTHON="$(command -v python3 || true)"; fi
+```
+
+Check Python availability, call `policy-engine.py validate --root "$ROOT"`,
+check the root line limit, required lifecycle terms, required CI-authoritative
+wording, local Markdown links, all required modules/templates/profiles, script
+executable bits, solo one-person wording, and regulated override wording. Print
+`ERROR:`, `WARNING:`, and one final success line. Exit non-zero on any error.
+
+- [ ] **Step 4: Implement the thin compatibility wrapper**
+
+```bash
+#!/usr/bin/env bash
+set -uo pipefail
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
+if [[ $# -ne 1 ]]; then
+  echo "Usage: scripts/validate-feature-context.sh <feature-directory>" >&2
+  exit 2
+fi
+exec "$ROOT/scripts/validate-instructions.sh" --context "$1/instruction-context.yaml"
+```
+
+Add `--context` forwarding to the primary validator.
+
+- [ ] **Step 5: Mark scripts executable and run tests**
+
+```bash
+chmod +x scripts/validate-instructions.sh scripts/validate-feature-context.sh scripts/policy-engine.py
+.venv/bin/python -m unittest tests.test_validator_cli -v
+```
+
+Expected: integration tests PASS.
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add scripts tests/test_validator_cli.py
+git commit -m "feat(validation): enforce instruction contracts"
 ```
 
 ---
