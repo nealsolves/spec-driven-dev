@@ -39,6 +39,26 @@ class PolicyValidationTest(unittest.TestCase):
     def test_repository_control_plane_is_valid(self):
         self.assertEqual(self.engine.validate_bundle(ROOT, None), [])
 
+    def test_unconfigured_repository_cannot_enable_remote_or_production_actions(self):
+        cases = (
+            ("remote_actions", "push_branch"),
+            ("production_actions", "deploy"),
+        )
+        for section, action in cases:
+            with self.subTest(section=section), temporary_repository() as root:
+                project_path = root / ".claude/project.yaml"
+                project = yaml.safe_load(project_path.read_text())
+                project[section]["enabled"] = True
+                project[section][action] = True
+                project_path.write_text(yaml.safe_dump(project, sort_keys=False))
+
+                errors = self.engine.validate_bundle(root, None)
+
+            self.assertTrue(
+                any("unconfigured" in error and section in error for error in errors),
+                errors,
+            )
+
     def test_unknown_top_level_control_key_fails_actionably(self):
         with temporary_repository() as root:
             project_path = root / ".claude/project.yaml"

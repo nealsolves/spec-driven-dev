@@ -62,14 +62,17 @@ The four JSON Schema Draft 2020-12 contracts are:
 contains reusable definitions for facts, evidence, exceptions, escalation
 packets, findings, and responses.
 
-The public CLI has exactly four operations:
+The public CLI requires Python 3.11+ with the bounded PyYAML and `jsonschema`
+dependencies installed. Prefer the project virtual environment shown below;
+`python3` is the supported fallback when it resolves to a compatible environment.
+The CLI has exactly four operations:
 
 ```bash
-python scripts/policy-engine.py validate --root . [--context PATH]
-python scripts/policy-engine.py evaluate --root . --context PATH [--output PATH]
-python scripts/policy-engine.py transition --root . --context PATH \
+.venv/bin/python scripts/policy-engine.py validate --root . [--context PATH]
+.venv/bin/python scripts/policy-engine.py evaluate --root . --context PATH [--output PATH]
+.venv/bin/python scripts/policy-engine.py transition --root . --context PATH \
   --decision PATH --to STATE [--output PATH]
-python scripts/policy-engine.py respond --root . --context PATH \
+.venv/bin/python scripts/policy-engine.py respond --root . --context PATH \
   --response PATH [--output PATH]
 ```
 

@@ -672,6 +672,46 @@ def _vocabulary_errors(bundle: dict[str, Any]) -> list[str]:
     return errors
 
 
+def _project_safety_errors(bundle: dict[str, Any]) -> list[str]:
+    """Reject authority-bearing defaults while the template is unconfigured."""
+
+    project = bundle["project"]
+    project_identity = project.get("project")
+    if not isinstance(project_identity, dict):
+        return []
+    if project_identity.get("lifecycle") != "unconfigured":
+        return []
+
+    errors: list[str] = []
+    guarded_sections = {
+        "remote_actions": (
+            "enabled",
+            "push_branch",
+            "open_pull_request",
+            "update_pull_request",
+            "merge_pull_request",
+            "create_release",
+        ),
+        "production_actions": ("enabled", "deploy", "rollback"),
+    }
+    for section_name, permission_names in guarded_sections.items():
+        section = project.get(section_name)
+        if not isinstance(section, dict):
+            continue
+        enabled = [
+            name for name in permission_names if section.get(name) is True
+        ]
+        if enabled:
+            errors.append(
+                _error(
+                    f"project.{section_name}: unconfigured repositories must "
+                    "disable all authority-bearing actions; enabled: "
+                    + ", ".join(enabled)
+                )
+            )
+    return errors
+
+
 def _lifecycle_errors(bundle: dict[str, Any]) -> list[str]:
     lifecycle = bundle["lifecycle"]
     normal_states = lifecycle.get("normal_states")
@@ -825,6 +865,7 @@ def validate_bundle(root: Path, context_path: Path | None) -> list[str]:
         errors.extend(_markdown_reference_errors(bundle))
         errors.extend(_profile_reference_errors(bundle))
         errors.extend(_vocabulary_errors(bundle))
+        errors.extend(_project_safety_errors(bundle))
         errors.extend(_lifecycle_errors(bundle))
         if context_path is not None:
             errors.extend(_context_errors(bundle, Path(context_path)))
