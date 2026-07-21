@@ -937,17 +937,15 @@ class InstructionStructureTest(unittest.TestCase):
         ):
             self.assertRegex(status.lower(), rf"\b{re.escape(state)}\b")
 
-    def test_design_and_status_record_approved_feature_review_state(self):
-        design = read(
-            "docs/superpowers/specs/2026-07-20-modular-instruction-system-design.md"
-        )
+    def test_local_planning_artifacts_are_ignored_and_not_tracked_sources(self):
+        gitignore = read(".gitignore")
+        readme = read("README.md")
         status = read("implementation_status.md")
 
-        self.assertIn("approved for MVP implementation", design)
-        self.assertNotIn("pending final written-spec approval", design)
-        self.assertIn("Verified feature branch", status)
-        self.assertIn("feat/001-modular-instruction-system", status)
-        self.assertIn("unverified local baseline reference", status)
+        self.assertIn("docs/superpowers/", gitignore)
+        self.assertNotIn("docs/superpowers", readme)
+        self.assertNotIn("docs/superpowers", status)
+        self.assertIn("Planning artifacts are intentionally local and ignored", status)
 
 
 if __name__ == "__main__":

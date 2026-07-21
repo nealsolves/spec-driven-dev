@@ -225,8 +225,6 @@ general policy-version migration.
 - [Modular delivery operating guide](.claude/README.md)
 - [Project initialization workflow](.claude/workflows/project-initialization.md)
 - [Delivery constitution](.specify/memory/constitution.md)
-- [Approved autonomous-delivery design](docs/superpowers/specs/2026-07-20-modular-instruction-system-design.md)
-- [README guidance design](docs/superpowers/specs/2026-07-20-readme-guidance-design.md)
 
 The README is an onboarding layer. If it conflicts with the behavioral kernel
 or validated control plane, those normative sources take precedence.
