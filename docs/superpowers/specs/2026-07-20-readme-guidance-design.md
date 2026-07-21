@@ -2,8 +2,8 @@
 
 ## Status
 
-The README direction was approved in conversation on 2026-07-20. This written
-specification awaits final user review before implementation.
+The README direction and written specification were approved by the user. The
+implementation is authorized as of 2026-07-21.
 
 ## Purpose
 
@@ -124,7 +124,6 @@ Implementation will be accepted when:
 
 ## Publication
 
-Implement the README on `agent/readme-guidance`, commit only the approved
-documentation and any narrowly required documentation tests, and push that
-branch to `nealsolves/spec-driven-dev`. Opening or merging another pull request
-is outside this request unless separately authorized.
+Implement the README on local `main`, commit only the approved documentation
+and its focused contract test, then fast-forward `origin/main` as explicitly
+authorized by the user. Preserve unrelated untracked files.
