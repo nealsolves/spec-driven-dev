@@ -1,0 +1,51 @@
+schema_version: 1
+control_plane_version: 1
+instruction_system:
+  module_state: complete
+project:
+  name: <product>
+  repository: <owner/repository>
+  lifecycle: unconfigured
+delivery:
+  base_profile: solo
+  overlays: []
+  owner: <name>
+  escalation_owner: <email-or-handle>
+spec_kit:
+  enabled: true
+  design_reference: v0.13.0
+  tested_version: unknown
+  minimum_version: unknown
+  allow_equivalent_manual_gates: true
+commands:
+  install: unknown
+  test: unknown
+  lint: unknown
+  typecheck: unknown
+  build: unknown
+  release: unknown
+data:
+  classifications: [unknown]
+  regulated_data: unknown
+  production_data_in_nonproduction: prohibited
+environments:
+  configured: []
+remote_actions:
+  enabled: false
+  repository: unknown
+  push_branch: false
+  open_pull_request: false
+  update_pull_request: false
+  merge_pull_request: false
+  create_release: false
+production_actions:
+  enabled: false
+  target: unknown
+  deploy: false
+  rollback: false
+  deploy_command: unknown
+  rollback_command: unknown
+financial_limits:
+  currency: unknown
+  autonomous_spend: 0
+external_obligations: []

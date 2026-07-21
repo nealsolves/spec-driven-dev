@@ -1,0 +1,4 @@
+{
+  "paths": ["migrations/0042_orders.sql"],
+  "schema_changes": true
+}

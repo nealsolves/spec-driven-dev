@@ -1,0 +1,901 @@
+import hashlib
+import json
+import os
+import shutil
+import subprocess
+import sys
+import tempfile
+import unittest
+from pathlib import Path
+
+import yaml
+
+from tests.helpers import ROOT, load_engine, temporary_repository
+
+
+ENGINE_PATH = ROOT / "scripts/policy-engine.py"
+
+
+class PolicyValidationTest(unittest.TestCase):
+    def setUp(self):
+        self.engine = load_engine()
+
+    def test_canonical_hash_is_independent_of_mapping_order(self):
+        expected = hashlib.sha256(b'{"a":1,"b":2}').hexdigest()
+
+        self.assertEqual(self.engine.canonical_hash({"b": 2, "a": 1}), expected)
+        self.assertEqual(
+            self.engine.canonical_hash({"b": 2, "a": 1}),
+            self.engine.canonical_hash({"a": 1, "b": 2}),
+        )
+
+    def test_load_control_plane_returns_all_controls_and_schemas(self):
+        bundle = self.engine.load_control_plane(ROOT)
+
+        self.assertEqual(
+            set(bundle),
+            {"root", "project", "routing", "policy", "lifecycle", "schemas"},
+        )
+        self.assertEqual(set(bundle["schemas"]), {"project", "routing", "policy", "context"})
+
+    def test_repository_control_plane_is_valid(self):
+        self.assertEqual(self.engine.validate_bundle(ROOT, None), [])
+
+    def test_unconfigured_repository_cannot_enable_remote_or_production_actions(self):
+        cases = (
+            ("remote_actions", "push_branch"),
+            ("production_actions", "deploy"),
+        )
+        for section, action in cases:
+            with self.subTest(section=section), temporary_repository() as root:
+                project_path = root / ".claude/project.yaml"
+                project = yaml.safe_load(project_path.read_text())
+                project[section]["enabled"] = True
+                project[section][action] = True
+                project_path.write_text(yaml.safe_dump(project, sort_keys=False))
+
+                errors = self.engine.validate_bundle(root, None)
+
+            self.assertTrue(
+                any("unconfigured" in error and section in error for error in errors),
+                errors,
+            )
+
+    def test_disabled_parent_rejects_enabled_child_permissions(self):
+        cases = (
+            ("remote_actions", "push_branch"),
+            ("production_actions", "rollback"),
+        )
+        for section, child in cases:
+            with self.subTest(section=section, child=child), temporary_repository() as root:
+                project_path = root / ".claude/project.yaml"
+                project = yaml.safe_load(project_path.read_text())
+                project["project"]["lifecycle"] = "configured"
+                project[section]["enabled"] = False
+                project[section][child] = True
+                project_path.write_text(yaml.safe_dump(project, sort_keys=False))
+
+                errors = self.engine.validate_bundle(root, None)
+
+            self.assertTrue(
+                any(section in error and child in error and "enabled: false" in error for error in errors),
+                errors,
+            )
+
+    def test_configured_remote_authority_requires_resolved_project_identity(self):
+        with temporary_repository() as root:
+            project_path = root / ".claude/project.yaml"
+            project = yaml.safe_load(project_path.read_text())
+            project["project"].update(
+                {"name": "delivery-template", "repository": "owner/repository", "lifecycle": "configured"}
+            )
+            project["delivery"].update(
+                {"owner": "owner@example.com", "escalation_owner": "owner@example.com"}
+            )
+            project["data"].update(
+                {"classifications": ["internal"], "regulated_data": "none"}
+            )
+            project["remote_actions"].update(
+                {"enabled": True, "repository": "unknown", "push_branch": True}
+            )
+            project_path.write_text(yaml.safe_dump(project, sort_keys=False))
+
+            errors = self.engine.validate_bundle(root, None)
+
+        self.assertTrue(
+            any("remote_actions.repository" in error and "resolved" in error for error in errors),
+            errors,
+        )
+
+    def test_configured_project_rejects_identity_owner_and_data_placeholders(self):
+        with temporary_repository() as root:
+            project_path = root / ".claude/project.yaml"
+            project = yaml.safe_load(project_path.read_text())
+            project["project"]["lifecycle"] = "configured"
+            project_path.write_text(yaml.safe_dump(project, sort_keys=False))
+
+            errors = self.engine.validate_bundle(root, None)
+
+        for field in (
+            "project.project.name",
+            "project.project.repository",
+            "project.delivery.owner",
+            "project.delivery.escalation_owner",
+            "project.remote_actions.repository",
+            "project.data.regulated_data",
+            "project.data.classifications",
+        ):
+            with self.subTest(field=field):
+                self.assertTrue(any(field in error for error in errors), errors)
+
+    def test_configured_project_requires_resolved_commands_and_enabled_spec_kit_versions(self):
+        with temporary_repository() as root:
+            project_path = root / ".claude/project.yaml"
+            project = yaml.safe_load(project_path.read_text())
+            project["project"].update(
+                {"name": "delivery-template", "repository": "owner/repository", "lifecycle": "configured"}
+            )
+            project["delivery"].update(
+                {"owner": "owner@example.com", "escalation_owner": "owner@example.com"}
+            )
+            project["data"].update(
+                {"classifications": ["internal"], "regulated_data": "none"}
+            )
+            project["remote_actions"]["repository"] = "owner/repository"
+            project_path.write_text(yaml.safe_dump(project, sort_keys=False))
+
+            errors = self.engine.validate_bundle(root, None)
+
+        for field in (
+            "project.commands.install",
+            "project.commands.test",
+            "project.commands.lint",
+            "project.commands.typecheck",
+            "project.commands.build",
+            "project.commands.release",
+            "project.spec_kit.tested_version",
+            "project.spec_kit.minimum_version",
+        ):
+            with self.subTest(field=field):
+                self.assertTrue(any(field in error for error in errors), errors)
+
+    def test_configured_project_accepts_explicitly_inapplicable_commands_and_spec_kit(self):
+        with temporary_repository() as root:
+            project_path = root / ".claude/project.yaml"
+            project = yaml.safe_load(project_path.read_text())
+            project["project"].update(
+                {"name": "delivery-template", "repository": "owner/repository", "lifecycle": "configured"}
+            )
+            project["delivery"].update(
+                {"owner": "owner@example.com", "escalation_owner": "owner@example.com"}
+            )
+            project["data"].update(
+                {"classifications": ["internal"], "regulated_data": "none"}
+            )
+            project["remote_actions"]["repository"] = "owner/repository"
+            project["commands"] = {
+                name: "not_applicable" for name in project["commands"]
+            }
+            project["spec_kit"].update(
+                {
+                    "enabled": False,
+                    "tested_version": "not_applicable",
+                    "minimum_version": "not_applicable",
+                }
+            )
+            project_path.write_text(yaml.safe_dump(project, sort_keys=False))
+
+            errors = self.engine.validate_bundle(root, None)
+
+        self.assertEqual(errors, [])
+
+    def test_malformed_configured_nested_sections_fail_without_exception(self):
+        with temporary_repository() as root:
+            project_path = root / ".claude/project.yaml"
+            project = yaml.safe_load(project_path.read_text())
+            project["project"]["lifecycle"] = "configured"
+            project["delivery"] = []
+            project_path.write_text(yaml.safe_dump(project, sort_keys=False))
+
+            errors = self.engine.validate_bundle(root, None)
+
+        self.assertTrue(errors)
+        self.assertTrue(all(error.startswith("ERROR:") for error in errors), errors)
+        self.assertTrue(any("project.delivery" in error for error in errors), errors)
+
+    def test_configured_production_authority_requires_target_environment_and_rollback(self):
+        with temporary_repository() as root:
+            project_path = root / ".claude/project.yaml"
+            project = yaml.safe_load(project_path.read_text())
+            project["project"].update(
+                {"name": "delivery-template", "repository": "owner/repository", "lifecycle": "configured"}
+            )
+            project["delivery"].update(
+                {"owner": "owner@example.com", "escalation_owner": "owner@example.com"}
+            )
+            project["data"].update(
+                {"classifications": ["internal"], "regulated_data": "none"}
+            )
+            project["remote_actions"]["repository"] = "owner/repository"
+            project["production_actions"].update(
+                {"enabled": True, "target": "unknown", "deploy": True, "rollback": False}
+            )
+            project_path.write_text(yaml.safe_dump(project, sort_keys=False))
+
+            errors = self.engine.validate_bundle(root, None)
+
+        self.assertTrue(any("production_actions.target" in error for error in errors), errors)
+        self.assertTrue(any("production_actions.rollback" in error for error in errors), errors)
+        self.assertTrue(any("environments.configured" in error for error in errors), errors)
+
+    def test_configured_production_authority_requires_concrete_deploy_and_rollback_commands(self):
+        with temporary_repository() as root:
+            project_path = root / ".claude/project.yaml"
+            project = yaml.safe_load(project_path.read_text())
+            project["project"].update(
+                {"name": "delivery-template", "repository": "owner/repository", "lifecycle": "configured"}
+            )
+            project["delivery"].update(
+                {"owner": "owner@example.com", "escalation_owner": "owner@example.com"}
+            )
+            project["data"].update(
+                {"classifications": ["internal"], "regulated_data": "none"}
+            )
+            project["commands"] = {
+                name: "not_applicable" for name in project["commands"]
+            }
+            project["spec_kit"].update(
+                {
+                    "enabled": False,
+                    "tested_version": "not_applicable",
+                    "minimum_version": "not_applicable",
+                }
+            )
+            project["environments"]["configured"] = ["production"]
+            project["remote_actions"]["repository"] = "owner/repository"
+            project["production_actions"].update(
+                {
+                    "enabled": True,
+                    "target": "production",
+                    "deploy": True,
+                    "rollback": True,
+                    "deploy_command": "unknown",
+                    "rollback_command": "not_applicable",
+                }
+            )
+            project_path.write_text(yaml.safe_dump(project, sort_keys=False))
+
+            errors = self.engine.validate_bundle(root, None)
+
+        self.assertTrue(
+            any("production_actions.deploy_command" in error and "concrete" in error for error in errors),
+            errors,
+        )
+        self.assertTrue(
+            any("production_actions.rollback_command" in error and "concrete" in error for error in errors),
+            errors,
+        )
+
+    def test_unknown_top_level_control_key_fails_actionably(self):
+        with temporary_repository() as root:
+            project_path = root / ".claude/project.yaml"
+            project = yaml.safe_load(project_path.read_text())
+            project["unexpected"] = True
+            project_path.write_text(yaml.safe_dump(project, sort_keys=False))
+
+            errors = self.engine.validate_bundle(root, None)
+
+        self.assertTrue(errors)
+        self.assertTrue(all(error.startswith("ERROR:") for error in errors))
+        self.assertTrue(any("project" in error and "unexpected" in error for error in errors))
+
+    def test_duplicate_yaml_key_fails_actionably(self):
+        with temporary_repository() as root:
+            project_path = root / ".claude/project.yaml"
+            project_path.write_text(project_path.read_text() + "schema_version: 1\n")
+
+            errors = self.engine.validate_bundle(root, None)
+
+        self.assertEqual(len(errors), 1)
+        self.assertIn("project: invalid YAML", errors[0])
+        self.assertIn("duplicate key 'schema_version'", errors[0])
+
+    def test_unknown_classification_route_fails(self):
+        with temporary_repository() as root:
+            routing_path = root / ".claude/routing.yaml"
+            routing = yaml.safe_load(routing_path.read_text())
+            routing["classification_rules"][0]["add"] = ["missing_route"]
+            routing_path.write_text(yaml.safe_dump(routing, sort_keys=False))
+
+            errors = self.engine.validate_bundle(root, None)
+
+        self.assertIn(
+            "ERROR: routing.classification_rules[0].add: unknown route 'missing_route'",
+            errors,
+        )
+
+    def test_unknown_overlay_route_fails(self):
+        with temporary_repository() as root:
+            routing_path = root / ".claude/routing.yaml"
+            routing = yaml.safe_load(routing_path.read_text())
+            routing["overlay_rules"] = [
+                {"overlay": "regulated", "add": ["missing_route"]}
+            ]
+            routing_path.write_text(yaml.safe_dump(routing, sort_keys=False))
+
+            errors = self.engine.validate_bundle(root, None)
+
+        self.assertIn(
+            "ERROR: routing.overlay_rules[0].add: unknown route 'missing_route'",
+            errors,
+        )
+
+    def test_unknown_action_route_and_action_fail_actionably(self):
+        cases = (
+            ("deploy_production", ["missing_route"], "unknown route 'missing_route'"),
+            ("unknown_action", ["release"], "unknown action 'unknown_action'"),
+        )
+        for action, additions, expected in cases:
+            with self.subTest(action=action), temporary_repository() as root:
+                routing_path = root / ".claude/routing.yaml"
+                routing = yaml.safe_load(routing_path.read_text())
+                routing["action_routes"] = {action: additions}
+                routing_path.write_text(yaml.safe_dump(routing, sort_keys=False))
+
+                errors = self.engine.validate_bundle(root, None)
+
+            self.assertTrue(any(expected in error for error in errors), errors)
+
+    def test_unknown_authority_fact_outcome_reference_fails(self):
+        with temporary_repository() as root:
+            policy_path = root / ".claude/policy.yaml"
+            policy = yaml.safe_load(policy_path.read_text())
+            policy["authority"]["fact_outcomes"] = {
+                "missing_fact": "human_required"
+            }
+            policy_path.write_text(yaml.safe_dump(policy, sort_keys=False))
+
+            errors = self.engine.validate_bundle(root, None)
+
+        self.assertIn(
+            "ERROR: policy.authority.fact_outcomes: unknown fact 'missing_fact'",
+            errors,
+        )
+
+    def test_duplicate_route_reference_fails(self):
+        with temporary_repository() as root:
+            routing_path = root / ".claude/routing.yaml"
+            routing = yaml.safe_load(routing_path.read_text())
+            routing["routes"]["security_sensitive"]["rules"] = [
+                "rules/security.md",
+                "rules/security.md",
+            ]
+            routing_path.write_text(yaml.safe_dump(routing, sort_keys=False))
+
+            errors = self.engine.validate_bundle(root, None)
+
+        self.assertTrue(any("non-unique elements" in error for error in errors), errors)
+
+    def test_existing_markdown_namespace_requires_referenced_files(self):
+        with temporary_repository() as root:
+            rules_directory = root / ".claude/rules"
+            for path in rules_directory.iterdir():
+                path.unlink()
+
+            errors = self.engine.validate_bundle(root, None)
+
+        self.assertIn(
+            "ERROR: routing markdown path does not exist: .claude/rules/engineering.md",
+            errors,
+        )
+
+    def test_bootstrapping_allows_not_yet_created_markdown_namespaces(self):
+        with temporary_repository() as root:
+            project_path = root / ".claude/project.yaml"
+            project = yaml.safe_load(project_path.read_text())
+            project["instruction_system"]["module_state"] = "bootstrapping"
+            project_path.write_text(yaml.safe_dump(project, sort_keys=False))
+            rules_directory = root / ".claude/rules"
+            for path in rules_directory.iterdir():
+                path.unlink()
+            rules_directory.rmdir()
+
+            errors = self.engine.validate_bundle(root, None)
+
+        self.assertEqual(errors, [])
+
+    def test_complete_module_state_requires_all_markdown_references(self):
+        with temporary_repository() as root:
+            (root / ".claude/rules/engineering.md").unlink()
+            (root / ".claude/workflows/maintenance.md").unlink()
+            project_path = root / ".claude/project.yaml"
+            project = yaml.safe_load(project_path.read_text())
+            project.setdefault("instruction_system", {})["module_state"] = "complete"
+            project_path.write_text(yaml.safe_dump(project, sort_keys=False))
+
+            errors = self.engine.validate_bundle(root, None)
+
+        self.assertIn(
+            "ERROR: routing markdown path does not exist: .claude/rules/engineering.md",
+            errors,
+        )
+        self.assertIn(
+            "ERROR: routing markdown path does not exist: .claude/workflows/maintenance.md",
+            errors,
+        )
+
+    def test_complete_state_fails_when_a_module_namespace_is_deleted(self):
+        cases = (
+            ("rules", "routing markdown path does not exist: .claude/rules/"),
+            ("workflows", "routing markdown path does not exist: .claude/workflows/"),
+            ("profiles", "routing profile path does not exist: .claude/profiles/"),
+        )
+        for namespace, expected in cases:
+            with self.subTest(namespace=namespace), temporary_repository() as root:
+                shutil.rmtree(root / ".claude" / namespace)
+
+                errors = self.engine.validate_bundle(root, None)
+
+                self.assertTrue(
+                    any(expected in error for error in errors),
+                    errors,
+                )
+
+    def test_profile_base_mapping_covers_project_schema_vocabulary(self):
+        with temporary_repository() as root:
+            routing_path = root / ".claude/routing.yaml"
+            routing = yaml.safe_load(routing_path.read_text())
+            routing.setdefault("profile_paths", {}).setdefault("base", {}).pop(
+                "team", None
+            )
+            routing_path.write_text(yaml.safe_dump(routing, sort_keys=False))
+
+            errors = self.engine.validate_bundle(root, None)
+
+        self.assertIn(
+            "ERROR: routing.profile_paths.base: missing project base profiles: team",
+            errors,
+        )
+
+    def test_selected_overlay_must_be_known_and_mapped(self):
+        with temporary_repository() as root:
+            project_path = root / ".claude/project.yaml"
+            project = yaml.safe_load(project_path.read_text())
+            project["delivery"]["overlays"] = ["regulatted"]
+            project_path.write_text(yaml.safe_dump(project, sort_keys=False))
+
+            errors = self.engine.validate_bundle(root, None)
+
+        self.assertIn(
+            "ERROR: project.delivery.overlays: unknown or unmapped overlay 'regulatted'",
+            errors,
+        )
+
+    def test_overlay_rule_requires_profile_mapping(self):
+        with temporary_repository() as root:
+            routing_path = root / ".claude/routing.yaml"
+            routing = yaml.safe_load(routing_path.read_text())
+            routing.setdefault("profile_paths", {}).setdefault("overlays", {}).pop(
+                "regulated", None
+            )
+            routing_path.write_text(yaml.safe_dump(routing, sort_keys=False))
+
+            errors = self.engine.validate_bundle(root, None)
+
+        self.assertIn(
+            "ERROR: routing.overlay_rules[0].overlay: missing profile mapping for 'regulated'",
+            errors,
+        )
+
+    def test_mapped_profile_file_must_exist(self):
+        with temporary_repository() as root:
+            (root / ".claude/profiles/regulated.md").unlink()
+
+            errors = self.engine.validate_bundle(root, None)
+
+        self.assertIn(
+            "ERROR: routing profile path does not exist: .claude/profiles/regulated.md",
+            errors,
+        )
+
+    def test_malformed_profile_path_remains_an_actionable_schema_error(self):
+        with temporary_repository() as root:
+            routing_path = root / ".claude/routing.yaml"
+            routing = yaml.safe_load(routing_path.read_text())
+            routing["profile_paths"]["base"]["solo"] = ["profiles/solo-developer.md"]
+            routing_path.write_text(yaml.safe_dump(routing, sort_keys=False))
+
+            errors = self.engine.validate_bundle(root, None)
+
+        self.assertTrue(
+            any("routing.profile_paths.base.solo" in error for error in errors),
+            errors,
+        )
+        self.assertFalse(
+            any("invalid control-plane structure" in error for error in errors),
+            errors,
+        )
+
+    def test_lifecycle_path_requires_declared_transition(self):
+        with temporary_repository() as root:
+            lifecycle_path = root / ".claude/lifecycle.yaml"
+            lifecycle = yaml.safe_load(lifecycle_path.read_text())
+            lifecycle["transitions"] = [
+                transition
+                for transition in lifecycle["transitions"]
+                if not (
+                    transition["from"] == "CLASSIFIED"
+                    and transition["to"] == "VALIDATING"
+                )
+            ]
+            lifecycle_path.write_text(yaml.safe_dump(lifecycle, sort_keys=False))
+
+            errors = self.engine.validate_bundle(root, None)
+
+        self.assertIn(
+            "ERROR: lifecycle.paths.maintenance: transition CLASSIFIED -> VALIDATING is not declared",
+            errors,
+        )
+
+    def test_reachable_normal_state_must_have_completion_path(self):
+        with temporary_repository() as root:
+            lifecycle_path = root / ".claude/lifecycle.yaml"
+            lifecycle = yaml.safe_load(lifecycle_path.read_text())
+            lifecycle["exceptional_states"].remove("INCIDENT")
+            lifecycle["normal_states"].append("INCIDENT")
+            lifecycle["transitions"].append(
+                {
+                    "from": "UNCLASSIFIED",
+                    "to": "INCIDENT",
+                    "requires": ["incident_detected"],
+                }
+            )
+            lifecycle_path.write_text(yaml.safe_dump(lifecycle, sort_keys=False))
+
+            errors = self.engine.validate_bundle(root, None)
+
+        self.assertIn(
+            "ERROR: lifecycle.normal_states: state INCIDENT cannot reach COMPLETE",
+            errors,
+        )
+
+    def test_workflow_vocabulary_must_match_context_schema(self):
+        with temporary_repository() as root:
+            routing_path = root / ".claude/routing.yaml"
+            routing = yaml.safe_load(routing_path.read_text())
+            routing["workflow_rules"]["experimental"] = "workflows/maintenance.md"
+            routing_path.write_text(yaml.safe_dump(routing, sort_keys=False))
+
+            errors = self.engine.validate_bundle(root, None)
+
+        self.assertIn(
+            "ERROR: vocabulary.workflow_family: configured-only values: experimental",
+            errors,
+        )
+
+    def test_action_vocabulary_must_match_context_schema(self):
+        with temporary_repository() as root:
+            policy_path = root / ".claude/policy.yaml"
+            policy = yaml.safe_load(policy_path.read_text())
+            del policy["authority"]["actions"]["risk_exception"]
+            policy_path.write_text(yaml.safe_dump(policy, sort_keys=False))
+
+            errors = self.engine.validate_bundle(root, None)
+
+        self.assertIn(
+            "ERROR: vocabulary.action: schema-only values: risk_exception",
+            errors,
+        )
+
+    def test_context_is_schema_validated(self):
+        with temporary_repository() as root:
+            context_path = root / "context.yaml"
+            context_path.write_text("schema_version: 1\nunexpected: true\n")
+
+            errors = self.engine.validate_bundle(root, context_path)
+
+        self.assertTrue(any("context" in error and "unexpected" in error for error in errors))
+
+    def test_valid_cli_emits_one_json_object(self):
+        result = subprocess.run(
+            [sys.executable, str(ENGINE_PATH), "validate", "--root", str(ROOT)],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+
+        payload = json.loads(result.stdout)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(result.stderr, "")
+        self.assertTrue(payload["valid"])
+        self.assertEqual(payload["errors"], [])
+        self.assertEqual(result.stdout.count("\n"), 1)
+
+    def test_invalid_cli_input_emits_json_without_traceback(self):
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(ENGINE_PATH),
+                "validate",
+                "--root",
+                str(ROOT / "does-not-exist"),
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+
+        payload = json.loads(result.stdout)
+        self.assertEqual(result.returncode, 1)
+        self.assertFalse(payload["valid"])
+        self.assertTrue(all(error.startswith("ERROR:") for error in payload["errors"]))
+        self.assertNotIn("Traceback", result.stdout + result.stderr)
+        self.assertEqual(result.stdout.count("\n"), 1)
+
+    def test_malformed_yaml_cli_emits_json_without_traceback(self):
+        with temporary_repository() as root:
+            (root / ".claude/project.yaml").write_text("project: [\n")
+            result = subprocess.run(
+                [sys.executable, str(ENGINE_PATH), "validate", "--root", str(root)],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+
+        payload = json.loads(result.stdout)
+        self.assertEqual(result.returncode, 1)
+        self.assertFalse(payload["valid"])
+        self.assertIn("ERROR: project: invalid YAML", payload["errors"][0])
+        self.assertNotIn("Traceback", result.stdout + result.stderr)
+        self.assertEqual(result.stdout.count("\n"), 1)
+
+    def test_broken_local_schema_ref_cli_fails_as_one_json_object(self):
+        with temporary_repository() as root:
+            schema_path = root / ".claude/schemas/project.schema.json"
+            schema = json.loads(schema_path.read_text())
+            schema["properties"]["schema_version"] = {"$ref": "#/$defs/missing"}
+            schema_path.write_text(json.dumps(schema))
+            result = subprocess.run(
+                [sys.executable, str(ENGINE_PATH), "validate", "--root", str(root)],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+
+        payload = json.loads(result.stdout)
+        self.assertEqual(result.returncode, 1)
+        self.assertFalse(payload["valid"])
+        self.assertEqual(result.stderr, "")
+        self.assertEqual(result.stdout.count("\n"), 1)
+        self.assertIn(
+            "ERROR: project schema: unresolved local reference #/$defs/missing "
+            "at #/properties/schema_version/$ref",
+            payload["errors"],
+        )
+        self.assertNotIn("Traceback", result.stdout + result.stderr)
+
+    def test_dormant_context_ref_is_preflighted_without_context(self):
+        with temporary_repository() as root:
+            schema_path = root / ".claude/schemas/context.schema.json"
+            schema = json.loads(schema_path.read_text())
+            schema["$defs"]["dormant"] = {"$ref": "#/$defs/missing"}
+            schema_path.write_text(json.dumps(schema))
+
+            errors = self.engine.validate_bundle(root, None)
+
+        self.assertIn(
+            "ERROR: context schema: unresolved local reference #/$defs/missing "
+            "at #/$defs/dormant/$ref",
+            errors,
+        )
+
+    def test_local_pointer_escaping_is_supported(self):
+        with temporary_repository() as root:
+            schema_path = root / ".claude/schemas/context.schema.json"
+            schema = json.loads(schema_path.read_text())
+            schema["$defs"]["slash/key"] = {"type": "string"}
+            schema["$defs"]["tilde~key"] = {"$ref": "#/$defs/slash~1key"}
+            schema["$defs"]["escaped"] = {"$ref": "#/$defs/tilde~0key"}
+            schema_path.write_text(json.dumps(schema))
+
+            errors = self.engine.validate_bundle(root, None)
+
+        self.assertEqual(errors, [])
+
+    def test_non_local_schema_ref_fails_closed(self):
+        with temporary_repository() as root:
+            schema_path = root / ".claude/schemas/context.schema.json"
+            schema = json.loads(schema_path.read_text())
+            schema["$defs"]["external"] = {
+                "$ref": "https://example.invalid/schema.json"
+            }
+            schema_path.write_text(json.dumps(schema))
+
+            errors = self.engine.validate_bundle(root, None)
+
+        self.assertIn(
+            "ERROR: context schema: unsupported non-local reference "
+            "'https://example.invalid/schema.json' at #/$defs/external/$ref",
+            errors,
+        )
+
+    def test_self_referential_schema_cli_fails_without_traceback(self):
+        with temporary_repository() as root:
+            schema_path = root / ".claude/schemas/project.schema.json"
+            schema = json.loads(schema_path.read_text())
+            schema["properties"]["schema_version"] = {
+                "$ref": "#/properties/schema_version"
+            }
+            schema_path.write_text(json.dumps(schema))
+            result = subprocess.run(
+                [sys.executable, str(ENGINE_PATH), "validate", "--root", str(root)],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+
+        payload = json.loads(result.stdout)
+        self.assertEqual(result.returncode, 1)
+        self.assertFalse(payload["valid"])
+        self.assertEqual(result.stderr, "")
+        self.assertEqual(result.stdout.count("\n"), 1)
+        self.assertIn(
+            "ERROR: project schema: reference cycle detected: "
+            "#/properties/schema_version -> #/properties/schema_version",
+            payload["errors"],
+        )
+        self.assertNotIn("Traceback", result.stdout + result.stderr)
+
+    def test_nested_indirect_reference_cycle_is_rejected(self):
+        with temporary_repository() as root:
+            schema_path = root / ".claude/schemas/project.schema.json"
+            schema = json.loads(schema_path.read_text())
+            schema["$defs"] = {
+                "a": {"$ref": "#/$defs/b"},
+                "b": {"anyOf": [{"$ref": "#/$defs/a"}]},
+            }
+            schema_path.write_text(json.dumps(schema))
+
+            errors = self.engine.validate_bundle(root, None)
+
+        self.assertIn(
+            "ERROR: project schema: reference cycle detected: "
+            "#/$defs/b -> #/$defs/a -> #/$defs/b",
+            errors,
+        )
+
+    def test_excessive_schema_nesting_cli_fails_without_traceback(self):
+        with temporary_repository() as root:
+            schema_path = root / ".claude/schemas/project.schema.json"
+            depth = 1500
+            schema_path.write_text(
+                '{"allOf":[' * depth + '{"type":"object"}' + "]}" * depth
+            )
+            result = subprocess.run(
+                [sys.executable, str(ENGINE_PATH), "validate", "--root", str(root)],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+
+        payload = json.loads(result.stdout)
+        self.assertEqual(result.returncode, 1)
+        self.assertFalse(payload["valid"])
+        self.assertEqual(result.stderr, "")
+        self.assertEqual(result.stdout.count("\n"), 1)
+        self.assertIn(
+            "ERROR: project schema: validation resource limit exceeded",
+            payload["errors"],
+        )
+        self.assertNotIn("Traceback", result.stdout + result.stderr)
+
+    def test_cli_missing_policy_dependencies_emit_one_technical_block_json_object(self):
+        for dependency in ("yaml", "jsonschema"):
+            with self.subTest(dependency=dependency), tempfile.TemporaryDirectory() as directory:
+                site_directory = Path(directory)
+                (site_directory / "sitecustomize.py").write_text(
+                    "import builtins\n"
+                    "import os\n"
+                    "_real_import = builtins.__import__\n"
+                    "_blocked = os.environ['POLICY_BLOCK_IMPORT']\n"
+                    "def _guarded_import(name, *args, **kwargs):\n"
+                    "    if name == _blocked or name.startswith(_blocked + '.'):\n"
+                    "        error = ModuleNotFoundError(f'No module named {_blocked!r}')\n"
+                    "        error.name = _blocked\n"
+                    "        raise error\n"
+                    "    return _real_import(name, *args, **kwargs)\n"
+                    "builtins.__import__ = _guarded_import\n",
+                    encoding="utf-8",
+                )
+                environment = os.environ.copy()
+                environment.update(
+                    {
+                        "POLICY_BLOCK_IMPORT": dependency,
+                        "PYTHONPATH": str(site_directory),
+                    }
+                )
+                result = subprocess.run(
+                    [sys.executable, str(ENGINE_PATH), "validate", "--root", str(ROOT)],
+                    env=environment,
+                    check=False,
+                    capture_output=True,
+                    text=True,
+                )
+
+            payload = json.loads(result.stdout)
+            self.assertEqual(result.returncode, 3)
+            self.assertEqual(result.stderr, "")
+            self.assertEqual(result.stdout.count("\n"), 1)
+            self.assertFalse(payload["valid"])
+            self.assertEqual(payload["state"], "BLOCKED_TECHNICAL")
+            self.assertIn(dependency, payload["errors"][0])
+            self.assertIn("requirements-policy.txt", payload["errors"][0])
+            self.assertNotIn("Traceback", result.stdout + result.stderr)
+
+    def test_decision_cli_resource_error_emits_stable_technical_block(self):
+        with tempfile.TemporaryDirectory() as directory:
+            site_directory = Path(directory) / "controlled-site"
+            site_directory.mkdir()
+            (site_directory / "sitecustomize.py").write_text(
+                "import json\n"
+                "_real_loads = json.loads\n"
+                "def _controlled_loads(value, *args, **kwargs):\n"
+                "    if isinstance(value, str) and 'trigger_resource_limit' in value:\n"
+                "        raise RecursionError('controlled decision recursion')\n"
+                "    return _real_loads(value, *args, **kwargs)\n"
+                "json.loads = _controlled_loads\n",
+                encoding="utf-8",
+            )
+            decision = Path(directory) / "decision.json"
+            decision.write_text(
+                '{"trigger_resource_limit": true}',
+                encoding="utf-8",
+            )
+            environment = os.environ.copy()
+            environment["PYTHONPATH"] = str(site_directory)
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    str(ENGINE_PATH),
+                    "transition",
+                    "--root",
+                    str(ROOT),
+                    "--context",
+                    str(ROOT / "tests/fixtures/contexts/maintenance-low.yaml"),
+                    "--decision",
+                    str(decision),
+                    "--to",
+                    "CLASSIFIED",
+                ],
+                env=environment,
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+
+        payload = json.loads(result.stdout)
+        self.assertEqual(result.returncode, 3, result.stdout + result.stderr)
+        self.assertEqual(result.stderr, "")
+        self.assertEqual(result.stdout.count("\n"), 1)
+        self.assertFalse(payload["valid"])
+        self.assertEqual(payload["state"], "BLOCKED_TECHNICAL")
+        self.assertIn("resource limit", payload["errors"][0])
+        self.assertNotIn("Traceback", result.stdout + result.stderr)
+
+    def test_transition_public_command_requires_complete_inputs(self):
+        result = subprocess.run(
+            [sys.executable, str(ENGINE_PATH), "transition", "--root", str(ROOT)],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+
+        payload = json.loads(result.stdout)
+        self.assertEqual(result.returncode, 1)
+        self.assertFalse(payload["valid"])
+        self.assertIn("--context, --decision, --to", payload["errors"][0])
+        self.assertNotIn("Traceback", result.stdout + result.stderr)
+
+
+if __name__ == "__main__":
+    unittest.main()

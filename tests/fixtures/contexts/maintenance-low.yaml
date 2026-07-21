@@ -1,0 +1,24 @@
+schema_version: 1
+change_id: maintenance-001
+workflow_family: maintenance
+action: local_implementation
+current_state: UNCLASSIFIED
+change_hash: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+facts:
+  documentation_only:
+    value: true
+    source_type: diff_analysis
+    source_ref: tests/fixtures/evidence/docs-diff.json
+    extractor: repository-fact-extractor-v1
+    confidence: 1.0
+    observed_at_change: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+    corroboration: []
+clarifications: []
+exceptions: []
+authority_constraints: []
+evidence: {}
+resources:
+  repair_attempts: 0
+  ci_reruns: 0
+open_escalation: null
+responses: []

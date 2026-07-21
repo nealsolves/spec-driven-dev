@@ -1,0 +1,24 @@
+schema_version: 1
+change_id: unknown-001
+workflow_family: feature
+action: local_implementation
+current_state: UNCLASSIFIED
+change_hash: dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd
+facts:
+  modifies_authorization:
+    value: unknown
+    source_type: semantic_diff_analysis
+    source_ref: tests/fixtures/evidence/material-unknown.json
+    extractor: repository-fact-extractor-v1
+    confidence: 0.4
+    observed_at_change: dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd
+    corroboration: []
+clarifications: []
+exceptions: []
+authority_constraints: []
+evidence: {}
+resources:
+  repair_attempts: 0
+  ci_reruns: 0
+open_escalation: null
+responses: []

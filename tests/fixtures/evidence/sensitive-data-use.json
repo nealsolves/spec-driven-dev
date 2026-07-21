@@ -1,0 +1,10 @@
+{
+  "change": "Share an existing sensitive customer-identifier class with a new fraud-screening processor.",
+  "existing_data_class": "customer_identifier",
+  "new_use": {
+    "purpose": "fraud_screening",
+    "processor": "new_external_processor",
+    "sharing_path": "service_to_processor_api",
+    "uses_ai": false
+  }
+}
