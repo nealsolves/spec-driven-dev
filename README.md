@@ -96,6 +96,7 @@ bash scripts/validate-instructions.sh
 Useful direct checks are:
 
 ```bash
+.venv/bin/python -m pip install -r requirements-test.txt
 .venv/bin/python scripts/policy-engine.py validate --root .
 .venv/bin/python -m unittest discover -s tests -p 'test_*.py'
 ```
@@ -191,6 +192,7 @@ CLAUDE.md                         Behavioral kernel and normative startup contra
 scripts/policy-engine.py         Four-command deterministic policy CLI
 scripts/validate-instructions.sh Primary repository validator
 requirements-policy.txt         Bounded policy-runtime dependencies
+requirements-test.txt           Bounded package-verification dependencies
 tests/                           Executable contracts and regression tests
 ```
 

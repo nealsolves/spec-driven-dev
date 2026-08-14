@@ -1,0 +1,6 @@
+-r requirements-policy.txt
+
+build>=1.2,<2
+packaging>=24,<27
+setuptools>=77,<85
+wheel>=0.45,<0.49
