@@ -5,12 +5,15 @@ import shutil
 import tempfile
 import unittest
 from pathlib import Path, PurePosixPath
+from unittest import mock
 
+from sdd.adapters import compatibility
 from sdd.adapters.compatibility import (
     ProjectionFailure,
     build_projection,
     check_projection,
     load_manifest,
+    write_projection,
 )
 from tests.projection_helpers import projection_repository, tree_snapshot
 
@@ -313,3 +316,211 @@ class ProjectionCheckingTest(unittest.TestCase):
                 json.dumps(payload, separators=(",", ":")), encoding="utf-8"
             )
             self.assert_invalid_manifest(root)
+
+
+class ProjectionWritingTest(unittest.TestCase):
+    def test_write_creates_a_missing_output_tree(self):
+        with projection_repository(include_outputs=False) as root:
+            plan = build_projection(root)
+            write_projection(root, plan)
+            self.assertEqual(check_projection(root, plan), ())
+
+    def test_bootstrap_registers_equal_outputs_without_rewriting_them(self):
+        with projection_repository() as root:
+            output = root / ".claude/rules/security.md"
+            before_mtime = output.stat().st_mtime_ns
+            plan = build_projection(root)
+            write_projection(root, plan)
+
+            self.assertEqual(output.stat().st_mtime_ns, before_mtime)
+            self.assertEqual(
+                (root / ".sdd/generated-files.json").read_bytes(),
+                plan.manifest_bytes,
+            )
+
+    def test_canonical_change_updates_only_target_and_manifest(self):
+        with projection_repository() as root:
+            first = build_projection(root)
+            write_projection(root, first)
+            before = tree_snapshot(root)
+            source = root / ".sdd/modules/rules/security.md"
+            source.write_text("# Desired security rule\n", encoding="utf-8")
+            desired = build_projection(root)
+            write_projection(root, desired)
+            after = tree_snapshot(root)
+
+        changed = {path for path in after if after[path] != before.get(path)}
+        self.assertEqual(
+            changed,
+            {
+                ".sdd/modules/rules/security.md",
+                ".sdd/generated-files.json",
+                ".claude/rules/security.md",
+            },
+        )
+
+    def test_one_conflict_blocks_every_planned_change(self):
+        with projection_repository() as root:
+            write_projection(root, build_projection(root))
+            (root / ".sdd/modules/rules/testing.md").write_text("# Desired\n")
+            (root / ".claude/rules/security.md").write_text("# Manual\n")
+            before = tree_snapshot(root)
+            with self.assertRaises(ProjectionFailure):
+                write_projection(root, build_projection(root))
+            after = tree_snapshot(root)
+        self.assertEqual(after, before)
+
+    def test_owned_removed_output_is_deleted(self):
+        with projection_repository() as root:
+            write_projection(root, build_projection(root))
+            source = root / ".sdd/modules/templates/maintenance-record-template.md"
+            target = root / ".claude/templates/maintenance-record-template.md"
+            source.unlink()
+            write_projection(root, build_projection(root))
+        self.assertFalse(target.exists())
+
+    def test_divergent_removed_output_is_preserved_and_blocks(self):
+        with projection_repository() as root:
+            write_projection(root, build_projection(root))
+            (root / ".sdd/modules/rules/security.md").unlink()
+            target = root / ".claude/rules/security.md"
+            target.write_text("# Manual\n")
+            before = tree_snapshot(root)
+            with self.assertRaises(ProjectionFailure):
+                write_projection(root, build_projection(root))
+            after = tree_snapshot(root)
+        self.assertEqual(after, before)
+
+    def test_interrupted_replacement_converges_on_rerun(self):
+        with projection_repository() as root:
+            write_projection(root, build_projection(root))
+            (root / ".sdd/modules/rules/security.md").write_text("# Security v2\n")
+            (root / ".sdd/modules/rules/testing.md").write_text("# Testing v2\n")
+            desired = build_projection(root)
+            real_replace = compatibility._replace_file
+            replacements = 0
+
+            def interrupt_after_first(*args, **kwargs):
+                nonlocal replacements
+                real_replace(*args, **kwargs)
+                replacements += 1
+                if replacements == 1:
+                    raise OSError("simulated interruption")
+
+            with mock.patch.object(compatibility, "_replace_file", interrupt_after_first):
+                with self.assertRaises(ProjectionFailure):
+                    write_projection(root, desired)
+
+            write_projection(root, desired)
+            self.assertEqual(check_projection(root, desired), ())
+
+    def test_unmanaged_extra_output_is_preserved_and_blocks(self):
+        with projection_repository() as root:
+            write_projection(root, build_projection(root))
+            extra = root / ".claude/rules/extra.md"
+            extra.write_text("# Extra\n")
+            before = tree_snapshot(root)
+            with self.assertRaises(ProjectionFailure):
+                write_projection(root, build_projection(root))
+            after = tree_snapshot(root)
+        self.assertEqual(after, before)
+
+    def test_unmanaged_equal_target_is_registered_during_bootstrap(self):
+        with projection_repository() as root:
+            plan = build_projection(root)
+            self.assertFalse((root / ".sdd/generated-files.json").exists())
+            write_projection(root, plan)
+            self.assertEqual(check_projection(root, plan), ())
+
+    def test_invalid_staged_policy_bundle_changes_nothing(self):
+        with projection_repository() as root:
+            write_projection(root, build_projection(root))
+            (root / ".sdd/controls/project.yaml").write_text("project: [\n")
+            before = tree_snapshot(root)
+            with self.assertRaises(ProjectionFailure) as raised:
+                write_projection(root, build_projection(root))
+            after = tree_snapshot(root)
+        self.assertEqual(after, before)
+        self.assertIn("invalid_source", {item.code for item in raised.exception.findings})
+
+    def test_malformed_staged_validator_contract_changes_nothing(self):
+        with projection_repository() as root:
+            before = tree_snapshot(root)
+            completed = mock.Mock(returncode=0, stdout="{}\n", stderr="")
+            with mock.patch.object(compatibility.subprocess, "run", return_value=completed):
+                with self.assertRaises(ProjectionFailure) as raised:
+                    write_projection(root, build_projection(root))
+            after = tree_snapshot(root)
+        self.assertEqual(after, before)
+        self.assertIn("technical_block", {item.code for item in raised.exception.findings})
+
+    def test_already_deleted_removed_target_converges(self):
+        with projection_repository() as root:
+            write_projection(root, build_projection(root))
+            (root / ".sdd/modules/templates/maintenance-record-template.md").unlink()
+            (root / ".claude/templates/maintenance-record-template.md").unlink()
+            desired = build_projection(root)
+            write_projection(root, desired)
+            self.assertEqual(check_projection(root, desired), ())
+
+    @unittest.skipUnless(hasattr(os, "symlink"), "symlinks are unavailable")
+    def test_target_parent_symlink_blocks_without_mutation(self):
+        with projection_repository() as root:
+            write_projection(root, build_projection(root))
+            rules = root / ".claude/rules"
+            shutil.rmtree(rules)
+            rules.symlink_to(root / ".claude/profiles", target_is_directory=True)
+            before = tree_snapshot(root)
+            with self.assertRaises(ProjectionFailure) as raised:
+                write_projection(root, build_projection(root))
+            after = tree_snapshot(root)
+        self.assertEqual(after, before)
+        self.assertIn("unsafe_path", {item.code for item in raised.exception.findings})
+
+    @unittest.skipUnless(hasattr(os, "symlink"), "symlinks are unavailable")
+    def test_source_parent_symlink_after_planning_is_unsafe(self):
+        with projection_repository() as root:
+            plan = build_projection(root)
+            rules = root / ".sdd/modules/rules"
+            shutil.rmtree(rules)
+            rules.symlink_to(root / ".sdd/modules/profiles", target_is_directory=True)
+            before = tree_snapshot(root)
+            with self.assertRaises(ProjectionFailure) as raised:
+                write_projection(root, plan)
+            after = tree_snapshot(root)
+        self.assertEqual(after, before)
+        self.assertIn("unsafe_path", {item.code for item in raised.exception.findings})
+
+    def test_repeated_write_is_byte_and_mtime_idempotent(self):
+        with projection_repository() as root:
+            plan = build_projection(root)
+            write_projection(root, plan)
+            before = {
+                path: path.stat().st_mtime_ns
+                for path in (root / ".claude").rglob("*")
+                if path.is_file()
+            }
+            manifest_mtime = (root / ".sdd/generated-files.json").stat().st_mtime_ns
+            write_projection(root, plan)
+            after = {path: path.stat().st_mtime_ns for path in before}
+            self.assertEqual(after, before)
+            self.assertEqual(
+                (root / ".sdd/generated-files.json").stat().st_mtime_ns,
+                manifest_mtime,
+            )
+
+    def test_manifest_replacement_is_last(self):
+        with projection_repository() as root:
+            write_projection(root, build_projection(root))
+            (root / ".sdd/modules/rules/security.md").write_text("# Desired\n")
+            calls = []
+            real_replace = compatibility._replace_file
+
+            def record(path, payload, executable):
+                calls.append(path.relative_to(root).as_posix())
+                return real_replace(path, payload, executable)
+
+            with mock.patch.object(compatibility, "_replace_file", record):
+                write_projection(root, build_projection(root))
+
+        self.assertEqual(calls[-1], ".sdd/generated-files.json")
