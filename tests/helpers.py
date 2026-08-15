@@ -22,5 +22,6 @@ def load_engine():
 def temporary_repository():
     with tempfile.TemporaryDirectory() as directory:
         root = Path(directory)
+        shutil.copytree(ROOT / ".sdd", root / ".sdd")
         shutil.copytree(ROOT / ".claude", root / ".claude")
         yield root

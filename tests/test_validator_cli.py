@@ -22,9 +22,11 @@ def repository_copy():
         root = Path(directory) / "repository"
         root.mkdir()
         for name in (
+            ".sdd",
             ".claude",
             ".specify",
             "scripts",
+            "src",
             "CLAUDE.md",
             "implementation_status.md",
             "requirements-policy.txt",
@@ -79,6 +81,38 @@ class ValidatorCliTest(unittest.TestCase):
             "WARNING: no context supplied; repository-only validation performed\n"
             "OK: instruction system validation passed\n",
         )
+
+    def test_primary_validator_rejects_stale_generated_output(self):
+        with repository_copy() as root:
+            canonical = root / ".sdd/modules/rules/security.md"
+            canonical.write_text(canonical.read_text("utf-8") + "\nCanonical change.\n")
+            result = run_script(root)
+
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("stale_output", result.stdout)
+        self.assertIn(".claude/rules/security.md", result.stdout)
+
+    def test_primary_validator_rejects_manual_generated_edit(self):
+        with repository_copy() as root:
+            generated = root / ".claude/rules/security.md"
+            generated.write_text(generated.read_text("utf-8") + "\nManual edit.\n")
+            result = run_script(root)
+
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("conflicting_output", result.stdout)
+
+    def test_projection_technical_block_propagates_exit_three(self):
+        with repository_copy() as root:
+            (root / "scripts/render-compatibility.py").write_text(
+                "#!/usr/bin/env python3\n"
+                "print('ERROR: technical_block: -: cannot inspect projection')\n"
+                "raise SystemExit(3)\n",
+                encoding="utf-8",
+            )
+            result = run_script(root)
+
+        self.assertEqual(result.returncode, 3, result.stdout + result.stderr)
+        self.assertIn("technical", result.stdout.lower() + result.stderr.lower())
 
     def test_validator_aggregates_missing_rule_line_limit_and_broken_link(self):
         with repository_copy() as root:

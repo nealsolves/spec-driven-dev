@@ -87,6 +87,15 @@ if [[ "$RUNTIME_PROBE_OUTPUT" != "$RUNTIME_EXPECTED" ]]; then
   technical_block
 fi
 
+PROJECTION_OUTPUT="$("$PYTHON" -B "$ROOT/scripts/render-compatibility.py" --root "$ROOT" --check 2>&1)"
+PROJECTION_STATUS=$?
+if [[ $PROJECTION_STATUS -ne 0 ]]; then
+  printf '%s\n' "$PROJECTION_OUTPUT"
+fi
+if [[ $PROJECTION_STATUS -eq 3 ]]; then
+  exit 3
+fi
+
 ENGINE_ARGUMENTS=("$ROOT/scripts/policy-engine.py" validate --root "$ROOT")
 if [[ -n "$CONTEXT" ]]; then
   ENGINE_ARGUMENTS+=(--context "$CONTEXT")
@@ -671,7 +680,7 @@ if [[ -z "$CONTEXT" ]]; then
   echo "WARNING: no context supplied; repository-only validation performed"
 fi
 
-if [[ $ENGINE_VALIDATION_STATUS -ne 0 || $DOCUMENT_STATUS -ne 0 ]]; then
+if [[ $PROJECTION_STATUS -ne 0 || $ENGINE_VALIDATION_STATUS -ne 0 || $DOCUMENT_STATUS -ne 0 ]]; then
   exit 1
 fi
 
