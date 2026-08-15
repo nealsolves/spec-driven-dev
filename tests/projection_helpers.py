@@ -34,7 +34,8 @@ def projection_repository(*, include_outputs: bool = True):
         if include_outputs:
             shutil.copytree(ROOT / ".claude", root / ".claude")
         (root / "scripts").mkdir()
-        shutil.copy2(ROOT / "scripts/policy-engine.py", root / "scripts/policy-engine.py")
+        for script in ("policy-engine.py", "render-compatibility.py"):
+            shutil.copy2(ROOT / "scripts" / script, root / "scripts" / script)
         yield root
 
 
