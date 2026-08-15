@@ -307,6 +307,7 @@ def _write_projection(root: Path, plan: ProjectionPlan) -> None:
                     ),
                 )
             )
+        _recheck_created_parents(repository, created_parents)
         if current_manifest != plan.manifest_bytes:
             _replace_file(manifest, plan.manifest_bytes, False)
     except ProjectionFailure:

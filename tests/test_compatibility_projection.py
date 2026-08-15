@@ -561,6 +561,35 @@ class ProjectionWritingTest(unittest.TestCase):
 
         self.assertIn("invalid_manifest", {item.code for item in raised.exception.findings})
 
+    def test_replaced_created_output_root_after_final_inventory_blocks_manifest_commit(self):
+        with projection_repository(include_outputs=False) as root:
+            desired = build_projection(root)
+            manifest = root / ".sdd/generated-files.json"
+            output_root = root / ".claude"
+            real_verify = compatibility._verify_live_outputs
+            replaced = False
+
+            def replace_created_root_after_final_inventory(*args, **kwargs):
+                nonlocal replaced
+                findings = real_verify(*args, **kwargs)
+                shutil.rmtree(output_root)
+                output_root.mkdir()
+                replaced = True
+                return findings
+
+            with mock.patch.object(
+                compatibility,
+                "_verify_live_outputs",
+                replace_created_root_after_final_inventory,
+            ):
+                with self.assertRaises(ProjectionFailure) as raised:
+                    write_projection(root, desired)
+
+            self.assertTrue(replaced)
+            self.assertFalse(manifest.exists())
+
+        self.assertIn("unsafe_path", {item.code for item in raised.exception.findings})
+
     def test_target_edit_during_staged_payload_read_blocks_replacement(self):
         with projection_repository() as root:
             write_projection(root, build_projection(root))
