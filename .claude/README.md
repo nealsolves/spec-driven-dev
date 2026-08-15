@@ -5,6 +5,20 @@ kernel. The template is intentionally local and small: Markdown explains the
 controls, YAML declares decisions, JSON Schema validates records, and one Python
 CLI evaluates policy. It is not a hosted governance service.
 
+## Canonical Source and Compatibility Projection
+
+`.sdd/` is the authoritative source for this operating guide, its controls,
+schemas, and modules. `.claude/` is generated compatibility output; do not edit it directly.
+The P0 legacy policy engine still reads `.claude/`.
+
+Edit canonical files, then use the projection commands to update or verify the
+compatibility tree:
+
+```bash
+.venv/bin/python scripts/render-compatibility.py --root . --write
+.venv/bin/python scripts/render-compatibility.py --root . --check
+```
+
 ## Three Layers
 
 1. **Behavioral kernel** — [`../CLAUDE.md`](../CLAUDE.md) defines authority,
@@ -12,8 +26,9 @@ CLI evaluates policy. It is not a hosted governance service.
 2. **Guidance** — `rules/`, `workflows/`, `profiles/`, and `templates/` hold
    focused human-readable controls and reusable evidence forms. Evaluation
    activates them additively; a routed module is mandatory.
-3. **Control plane** — `project.yaml`, `routing.yaml`, `policy.yaml`, and
-   `lifecycle.yaml` are validated data consumed by `scripts/policy-engine.py`.
+3. **Control plane** — [`../.sdd/controls/project.yaml`](../.sdd/controls/project.yaml),
+   `routing.yaml`, `policy.yaml`, and `lifecycle.yaml` are validated data
+   consumed by `scripts/policy-engine.py`.
 
 The Markdown layer explains why and how. The YAML layer says what is configured.
 The policy engine computes the consequential decisions; an agent supplies typed,
@@ -40,10 +55,10 @@ plan; completed installations must contain every configured module path.
 
 | File | Responsibility |
 |---|---|
-| [`project.yaml`](project.yaml) | Identity, lifecycle, ownership, environments, data posture, project commands, overlays, financial limits, and remote/production permissions. |
-| [`routing.yaml`](routing.yaml) | Observable fact catalog, deterministic base/overlay profile paths, workflow selection, fact and action classifications, always-on rules, and additive module routes. |
-| [`policy.yaml`](policy.yaml) | Simple risk tiers, deny-overrides authority, clarifications, exceptions, reviews, and bounded resource limits. |
-| [`lifecycle.yaml`](lifecycle.yaml) | Normal and exceptional states, allowed transitions, evidence prerequisites, recoveries, and terminal paths. |
+| [`project.yaml`](../.sdd/controls/project.yaml) | Identity, lifecycle, ownership, environments, data posture, project commands, overlays, financial limits, and remote/production permissions. |
+| [`routing.yaml`](../.sdd/controls/routing.yaml) | Observable fact catalog, deterministic base/overlay profile paths, workflow selection, fact and action classifications, always-on rules, and additive module routes. |
+| [`policy.yaml`](../.sdd/controls/policy.yaml) | Simple risk tiers, deny-overrides authority, clarifications, exceptions, reviews, and bounded resource limits. |
+| [`lifecycle.yaml`](../.sdd/controls/lifecycle.yaml) | Normal and exceptional states, allowed transitions, evidence prerequisites, recoveries, and terminal paths. |
 
 Version 1 deliberately keeps these concerns in four files so a solo owner can
 read and tune the full control plane. Unknown project values remain explicit;
@@ -53,10 +68,10 @@ they are never filled by inference merely to unlock authority.
 
 The four JSON Schema Draft 2020-12 contracts are:
 
-- [`schemas/project.schema.json`](schemas/project.schema.json)
-- [`schemas/routing.schema.json`](schemas/routing.schema.json)
-- [`schemas/policy.schema.json`](schemas/policy.schema.json)
-- [`schemas/context.schema.json`](schemas/context.schema.json)
+- [`schemas/project.schema.json`](../.sdd/schemas/project.schema.json)
+- [`schemas/routing.schema.json`](../.sdd/schemas/routing.schema.json)
+- [`schemas/policy.schema.json`](../.sdd/schemas/policy.schema.json)
+- [`schemas/context.schema.json`](../.sdd/schemas/context.schema.json)
 
 `policy.schema.json` also exposes the lifecycle contract. The context schema
 contains reusable definitions for facts, evidence, exceptions, escalation

@@ -2,9 +2,9 @@
   "files": [
     {
       "executable": false,
-      "output_sha256": "012419754127ad5d0e05f9513b8cab9e84e78f461fee3c2872b8ed128c2f93a1",
+      "output_sha256": "19911cbeecaa2004ead889cb300db1a2ae95e355f5c4bc7f058bb04d8c476ff1",
       "source": ".sdd/README.md",
-      "source_sha256": "012419754127ad5d0e05f9513b8cab9e84e78f461fee3c2872b8ed128c2f93a1",
+      "source_sha256": "19911cbeecaa2004ead889cb300db1a2ae95e355f5c4bc7f058bb04d8c476ff1",
       "target": ".claude/README.md"
     },
     {

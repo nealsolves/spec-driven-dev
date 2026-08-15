@@ -23,7 +23,7 @@
 | Deliverable | Status | Evidence or next gate |
 |---|---|---|
 | Project initialization | not started | The reusable template intentionally remains unconfigured; resolve identity, commands, environments, owners, data posture, and authority before instantiation. |
-| Specification and plan | deferred | Planning artifacts are intentionally local and ignored; tracked operating requirements live in `CLAUDE.md`, `.claude/`, and the constitution. |
+| Specification and plan | deferred | Planning artifacts are intentionally local and ignored; tracked operating requirements live in `CLAUDE.md`, `.sdd/`, and the constitution. |
 | Implementation | in review | Compact kernel, four control files, four schemas, modular guidance, four-command engine, and validators are present on the active branch. |
 | Validation | in review | Repository validator passed; 160 unit tests passed; root kernel is 230 lines; `git diff --check` passed. |
 | Review and convergence | in review | Task-level reviews are complete; final broad review is the current gate. |
