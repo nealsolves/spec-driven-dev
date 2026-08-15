@@ -474,10 +474,26 @@ def _discover_compatibility_artifacts(
     repository: Path, findings: list[Finding]
 ) -> dict[PurePosixPath, tuple[str, bool] | object]:
     artifacts: dict[PurePosixPath, tuple[str, bool] | object] = {}
+    seen_paths: dict[str, PurePosixPath] = {}
     output_root = repository / ".claude"
 
     def relative(path: Path) -> PurePosixPath:
         return PurePosixPath(path.relative_to(repository).as_posix())
+
+    def collides(target: PurePosixPath) -> bool:
+        folded = target.as_posix().casefold()
+        previous = seen_paths.get(folded)
+        if previous is None:
+            seen_paths[folded] = target
+            return False
+        findings.append(
+            Finding(
+                "unsafe_path",
+                target,
+                f"output path collides with {previous.as_posix()}",
+            )
+        )
+        return True
 
     def walk(directory: Path) -> None:
         try:
@@ -489,6 +505,7 @@ def _discover_compatibility_artifacts(
             return
         for child in children:
             target = relative(child)
+            case_collision = collides(target)
             try:
                 info = child.lstat()
             except (OSError, RuntimeError):
@@ -501,14 +518,17 @@ def _discover_compatibility_artifacts(
             elif stat.S_ISDIR(info.st_mode):
                 walk(child)
             elif stat.S_ISREG(info.st_mode):
-                try:
-                    artifacts[target] = (
-                        hashlib.sha256(child.read_bytes()).hexdigest(),
-                        bool(info.st_mode & 0o111),
-                    )
-                except (OSError, RuntimeError):
-                    findings.append(Finding("technical_block", target, "file cannot be read"))
+                if case_collision:
                     artifacts[target] = _UNSAFE_ARTIFACT
+                else:
+                    try:
+                        artifacts[target] = (
+                            hashlib.sha256(child.read_bytes()).hexdigest(),
+                            bool(info.st_mode & 0o111),
+                        )
+                    except (OSError, RuntimeError):
+                        findings.append(Finding("technical_block", target, "file cannot be read"))
+                        artifacts[target] = _UNSAFE_ARTIFACT
             else:
                 findings.append(Finding("unsafe_path", target, "unsupported file type"))
                 artifacts[target] = _UNSAFE_ARTIFACT

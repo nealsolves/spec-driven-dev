@@ -189,6 +189,17 @@ class ProjectionCheckingTest(unittest.TestCase):
             codes = self.finding_codes(root, plan)
         self.assertIn("unexpected_output", codes)
 
+    def test_case_colliding_output_directory_is_unsafe(self):
+        with projection_repository() as root:
+            plan = self.initialize_manifest(root)
+            collision = root / ".claude/Rules"
+            try:
+                collision.mkdir()
+            except FileExistsError:
+                self.skipTest("filesystem collapses case-only names")
+            codes = self.finding_codes(root, plan)
+        self.assertIn("unsafe_path", codes)
+
     def test_removed_canonical_source_is_extra_managed(self):
         with projection_repository() as root:
             self.initialize_manifest(root)
