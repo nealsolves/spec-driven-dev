@@ -908,6 +908,28 @@ class InstructionStructureTest(unittest.TestCase):
         self.assertIn("render-compatibility.py --root . --write", canonical)
         self.assertIn("legacy policy engine still reads `.claude/`", canonical)
 
+    def test_operating_guide_links_canonical_control_and_module_namespaces(self):
+        guide = read(".sdd/README.md")
+        for path in (
+            "../.sdd/controls/project.yaml",
+            "../.sdd/controls/routing.yaml",
+            "../.sdd/controls/policy.yaml",
+            "../.sdd/controls/lifecycle.yaml",
+            "../.sdd/modules/rules/",
+            "../.sdd/modules/workflows/",
+            "../.sdd/modules/profiles/",
+            "../.sdd/modules/templates/",
+        ):
+            self.assertIn(path, guide)
+        self.assertNotIn(
+            "`rules/`, `workflows/`, `profiles/`, and `templates/`",
+            guide,
+        )
+        self.assertNotIn(
+            "`routing.yaml`, `policy.yaml`, and `lifecycle.yaml`",
+            guide,
+        )
+
     def test_constitution_defines_required_governing_principles(self):
         constitution = read(".specify/memory/constitution.md")
         for principle in (

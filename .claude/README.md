@@ -23,11 +23,16 @@ compatibility tree:
 
 1. **Behavioral kernel** — [`../CLAUDE.md`](../CLAUDE.md) defines authority,
    startup, invariants, lifecycle, routing, escalation, and done.
-2. **Guidance** — `rules/`, `workflows/`, `profiles/`, and `templates/` hold
-   focused human-readable controls and reusable evidence forms. Evaluation
-   activates them additively; a routed module is mandatory.
-3. **Control plane** — [`../.sdd/controls/project.yaml`](../.sdd/controls/project.yaml),
-   `routing.yaml`, `policy.yaml`, and `lifecycle.yaml` are validated data
+2. **Guidance** — [`rules/`](../.sdd/modules/rules/),
+   [`workflows/`](../.sdd/modules/workflows/),
+   [`profiles/`](../.sdd/modules/profiles/), and
+   [`templates/`](../.sdd/modules/templates/) hold focused human-readable
+   controls and reusable evidence forms. Evaluation activates them additively;
+   a routed module is mandatory.
+3. **Control plane** — [`project.yaml`](../.sdd/controls/project.yaml),
+   [`routing.yaml`](../.sdd/controls/routing.yaml),
+   [`policy.yaml`](../.sdd/controls/policy.yaml), and
+   [`lifecycle.yaml`](../.sdd/controls/lifecycle.yaml) are validated data
    consumed by `scripts/policy-engine.py`.
 
 The Markdown layer explains why and how. The YAML layer says what is configured.
