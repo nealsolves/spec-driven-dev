@@ -414,6 +414,38 @@ class ProjectionWritingTest(unittest.TestCase):
             write_projection(root, desired)
             self.assertEqual(check_projection(root, desired), ())
 
+    def test_target_edit_during_staged_payload_read_blocks_replacement(self):
+        with projection_repository() as root:
+            write_projection(root, build_projection(root))
+            source = root / ".sdd/modules/rules/security.md"
+            target = root / ".claude/rules/security.md"
+            manifest = root / ".sdd/generated-files.json"
+            prior_manifest = manifest.read_bytes()
+            source.write_text("# Desired\n", encoding="utf-8")
+            desired = build_projection(root)
+            real_read_bytes = Path.read_bytes
+            staged_reads = 0
+
+            def edit_target_during_payload_read(path):
+                nonlocal staged_reads
+                if path != target and path.as_posix().endswith(
+                    "/.claude/rules/security.md"
+                ):
+                    staged_reads += 1
+                    if staged_reads == 2:
+                        target.write_text("# Manual\n", encoding="utf-8")
+                return real_read_bytes(path)
+
+            with mock.patch.object(Path, "read_bytes", edit_target_during_payload_read):
+                with self.assertRaises(ProjectionFailure) as raised:
+                    write_projection(root, desired)
+
+            self.assertEqual(target.read_text(encoding="utf-8"), "# Manual\n")
+            self.assertEqual(manifest.read_bytes(), prior_manifest)
+        self.assertIn(
+            "conflicting_output", {item.code for item in raised.exception.findings}
+        )
+
     def test_unmanaged_extra_output_is_preserved_and_blocks(self):
         with projection_repository() as root:
             write_projection(root, build_projection(root))
@@ -447,6 +479,36 @@ class ProjectionWritingTest(unittest.TestCase):
         with projection_repository() as root:
             before = tree_snapshot(root)
             completed = mock.Mock(returncode=0, stdout="{}\n", stderr="")
+            with mock.patch.object(compatibility.subprocess, "run", return_value=completed):
+                with self.assertRaises(ProjectionFailure) as raised:
+                    write_projection(root, build_projection(root))
+            after = tree_snapshot(root)
+        self.assertEqual(after, before)
+        self.assertIn("technical_block", {item.code for item in raised.exception.findings})
+
+    def test_undecodable_staged_validator_stdout_is_technical_block(self):
+        with projection_repository() as root:
+            before = tree_snapshot(root)
+            decoding_failure = UnicodeDecodeError(
+                "utf-8", b"\xff", 0, 1, "invalid start byte"
+            )
+            with mock.patch.object(
+                compatibility.subprocess, "run", side_effect=decoding_failure
+            ):
+                with self.assertRaises(ProjectionFailure) as raised:
+                    write_projection(root, build_projection(root))
+            after = tree_snapshot(root)
+        self.assertEqual(after, before)
+        self.assertIn("technical_block", {item.code for item in raised.exception.findings})
+
+    def test_nonzero_staged_validator_success_json_is_technical_block(self):
+        with projection_repository() as root:
+            before = tree_snapshot(root)
+            completed = mock.Mock(
+                returncode=3,
+                stdout='{"valid": true, "errors": []}\n',
+                stderr="",
+            )
             with mock.patch.object(compatibility.subprocess, "run", return_value=completed):
                 with self.assertRaises(ProjectionFailure) as raised:
                     write_projection(root, build_projection(root))

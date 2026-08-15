@@ -176,6 +176,7 @@ def write_projection(root: Path, plan: ProjectionPlan) -> None:
         for target in sorted(desired, key=lambda item: item.as_posix()):
             entry = desired[target]
             path = repository / target
+            payload = (staging_root / target).read_bytes()
             parent_identities[path.parent] = _recheck_parent(
                 repository, parent_identities[path.parent], created_parents
             )
@@ -195,7 +196,6 @@ def write_projection(root: Path, plan: ProjectionPlan) -> None:
                     )
                 )
             if current != (entry.output_sha256, entry.executable):
-                payload = (staging_root / target).read_bytes()
                 _replace_file(path, payload, entry.executable)
 
         for target in sorted(previous.keys() - desired.keys(), key=lambda item: item.as_posix()):
@@ -425,7 +425,7 @@ def _validate_staged_bundle(root: Path, staging_root: Path) -> tuple[Finding, ..
         )
     except ProjectionFailure as failure:
         return _sorted_check_findings(list(failure.findings))
-    except (OSError, RuntimeError):
+    except (OSError, RuntimeError, UnicodeError):
         return (
             Finding("technical_block", None, "staged policy validation could not execute"),
         )
@@ -444,11 +444,19 @@ def _validate_staged_bundle(root: Path, staging_root: Path) -> tuple[Finding, ..
         return (
             Finding("technical_block", None, "staged policy validation returned invalid JSON"),
         )
-    if completed.returncode != 0 or result.get("valid") is not True or result.get("errors") != []:
+    if completed.returncode == 1 and result["valid"] is False and result["errors"]:
         return (
             Finding("invalid_source", None, "staged policy bundle is invalid"),
         )
-    return ()
+    if completed.returncode == 0 and result["valid"] is True and result["errors"] == []:
+        return ()
+    return (
+        Finding(
+            "technical_block",
+            None,
+            "staged policy validation returned a contradictory result",
+        ),
+    )
 
 
 def _replace_file(path: Path, payload: bytes, executable: bool) -> None:
