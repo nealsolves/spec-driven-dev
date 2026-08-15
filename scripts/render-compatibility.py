@@ -34,7 +34,7 @@ def main(argv: list[str] | None = None) -> int:
             check_projection,
             write_projection,
         )
-    except (ImportError, OSError, RuntimeError) as exc:
+    except Exception as exc:
         print(f"ERROR: technical_block: {exc}")
         return 3
 
