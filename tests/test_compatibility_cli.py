@@ -1,3 +1,4 @@
+import json
 import os
 import shutil
 import subprocess
@@ -129,3 +130,45 @@ class CompatibilityCliTest(unittest.TestCase):
             result = run_cli(root, "--check")
         self.assertEqual(result.returncode, 1)
         self.assertIn("invalid_manifest", result.stdout)
+
+    def test_write_rejects_nul_manifest_path_without_traceback_or_target_mutation(self):
+        with projection_repository() as root:
+            self.prepare_script(root)
+            plan = build_projection(root)
+            payload = json.loads(plan.manifest_bytes)
+            entry = next(
+                item
+                for item in payload["files"]
+                if item["target"] == ".claude/schemas/context.schema.json"
+            )
+            entry["source"] = ".sdd/schemas/context\x00.schema.json"
+            entry["target"] = ".claude/schemas/context\x00.schema.json"
+            manifest = root / ".sdd/generated-files.json"
+            manifest.write_text(
+                json.dumps(payload, sort_keys=True, indent=2) + "\n",
+                encoding="utf-8",
+            )
+            malformed_manifest = manifest.read_bytes()
+            (root / ".sdd/modules/rules/security.md").write_text(
+                "# Desired\n", encoding="utf-8"
+            )
+            before_outputs = {
+                path: state
+                for path, state in tree_snapshot(root).items()
+                if path.startswith(".claude/")
+            }
+
+            result = run_cli(root, "--write")
+
+            after_outputs = {
+                path: state
+                for path, state in tree_snapshot(root).items()
+                if path.startswith(".claude/")
+            }
+            current_manifest = manifest.read_bytes()
+
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("invalid_manifest", result.stdout)
+        self.assertNotIn("Traceback", result.stdout + result.stderr)
+        self.assertEqual(after_outputs, before_outputs)
+        self.assertEqual(current_manifest, malformed_manifest)

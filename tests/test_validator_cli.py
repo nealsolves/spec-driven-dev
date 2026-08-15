@@ -92,6 +92,18 @@ class ValidatorCliTest(unittest.TestCase):
         self.assertIn("stale_output", result.stdout)
         self.assertIn(".claude/rules/security.md", result.stdout)
 
+    def test_primary_validator_rejects_desired_output_with_stale_manifest_metadata(self):
+        with repository_copy() as root:
+            canonical = root / ".sdd/modules/rules/security.md"
+            generated = root / ".claude/rules/security.md"
+            canonical.write_text(canonical.read_text("utf-8") + "\nCanonical change.\n")
+            generated.write_bytes(canonical.read_bytes())
+            result = run_script(root)
+
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("invalid_manifest", result.stdout)
+        self.assertIn(".sdd/generated-files.json", result.stdout)
+
     def test_primary_validator_rejects_manual_generated_edit(self):
         with repository_copy() as root:
             generated = root / ".claude/rules/security.md"

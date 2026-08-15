@@ -169,6 +169,33 @@ class ProjectionCheckingTest(unittest.TestCase):
             codes = self.finding_codes(root, plan)
         self.assertIn("stale_output", codes)
 
+    def test_desired_output_with_stale_manifest_metadata_is_invalid(self):
+        with projection_repository() as root:
+            self.initialize_manifest(root)
+            source = root / ".sdd/modules/rules/security.md"
+            target = root / ".claude/rules/security.md"
+            source.write_text("# Revised\n", encoding="utf-8")
+            target.write_bytes(source.read_bytes())
+            findings = check_projection(root, build_projection(root))
+
+        self.assertEqual({finding.code for finding in findings}, {"invalid_manifest"})
+        self.assertEqual(
+            {finding.path for finding in findings},
+            {PurePosixPath(".sdd/generated-files.json")},
+        )
+
+    def test_manifest_mismatch_does_not_hide_independent_output_findings(self):
+        with projection_repository() as root:
+            self.initialize_manifest(root)
+            source = root / ".sdd/modules/rules/security.md"
+            target = root / ".claude/rules/security.md"
+            source.write_text("# Revised\n", encoding="utf-8")
+            target.write_bytes(source.read_bytes())
+            (root / ".claude/rules/testing.md").unlink()
+            codes = self.finding_codes(root, build_projection(root))
+
+        self.assertEqual(codes, {"invalid_manifest", "missing_output"})
+
     def test_third_state_output_is_conflicting(self):
         with projection_repository() as root:
             self.initialize_manifest(root)
@@ -317,6 +344,41 @@ class ProjectionCheckingTest(unittest.TestCase):
             )
             self.assert_invalid_manifest(root)
 
+    def test_manifest_paths_reject_nul_and_unrepresentable_unicode(self):
+        invalid_components = {
+            "nul": "context\x00.schema.json",
+            "unpaired_surrogate": "context\ud800.schema.json",
+        }
+        with projection_repository() as root:
+            original = json.loads(build_projection(root).manifest_bytes)
+            manifest = root / ".sdd/generated-files.json"
+            for name, component in invalid_components.items():
+                with self.subTest(name=name):
+                    candidate = copy.deepcopy(original)
+                    entry = next(
+                        item
+                        for item in candidate["files"]
+                        if item["target"] == ".claude/schemas/context.schema.json"
+                    )
+                    entry["source"] = f".sdd/schemas/{component}"
+                    entry["target"] = f".claude/schemas/{component}"
+                    manifest.write_text(
+                        json.dumps(candidate, sort_keys=True, indent=2) + "\n",
+                        encoding="utf-8",
+                    )
+                    self.assert_invalid_manifest(root)
+
+    def test_unrepresentable_repository_path_is_a_structured_technical_failure(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "repository\ud800"
+            with self.assertRaises(ProjectionFailure) as raised:
+                load_manifest(root)
+
+        self.assertEqual(
+            {finding.code for finding in raised.exception.findings},
+            {"technical_block"},
+        )
+
 
 class ProjectionWritingTest(unittest.TestCase):
     def test_write_creates_a_missing_output_tree(self):
@@ -413,6 +475,91 @@ class ProjectionWritingTest(unittest.TestCase):
 
             write_projection(root, desired)
             self.assertEqual(check_projection(root, desired), ())
+
+    def test_replaced_created_output_root_blocks_manifest_commit(self):
+        with projection_repository(include_outputs=False) as root:
+            desired = build_projection(root)
+            manifest = root / ".sdd/generated-files.json"
+            output_root = root / ".claude"
+            real_replace = compatibility._replace_file
+            replaced = False
+
+            def replace_created_root_after_direct_outputs(path, payload, executable):
+                nonlocal replaced
+                real_replace(path, payload, executable)
+                if path == root / ".claude/routing.yaml":
+                    shutil.rmtree(output_root)
+                    output_root.mkdir()
+                    replaced = True
+
+            with mock.patch.object(
+                compatibility,
+                "_replace_file",
+                replace_created_root_after_direct_outputs,
+            ):
+                with self.assertRaises(ProjectionFailure) as raised:
+                    write_projection(root, desired)
+
+            self.assertTrue(replaced)
+            self.assertFalse(manifest.exists())
+
+        self.assertIn("unsafe_path", {item.code for item in raised.exception.findings})
+
+    def test_final_live_inventory_blocks_manifest_when_output_disappears(self):
+        with projection_repository() as root:
+            write_projection(root, build_projection(root))
+            manifest = root / ".sdd/generated-files.json"
+            prior_manifest = manifest.read_bytes()
+            source = root / ".sdd/modules/workflows/release.md"
+            source.write_text("# Desired release workflow\n", encoding="utf-8")
+            desired = build_projection(root)
+            removed = root / ".claude/README.md"
+            real_replace = compatibility._replace_file
+
+            def remove_output_after_last_replacement(path, payload, executable):
+                real_replace(path, payload, executable)
+                if path == root / ".claude/workflows/release.md":
+                    removed.unlink()
+
+            with mock.patch.object(
+                compatibility,
+                "_replace_file",
+                remove_output_after_last_replacement,
+            ):
+                with self.assertRaises(ProjectionFailure) as raised:
+                    write_projection(root, desired)
+
+            self.assertFalse(removed.exists())
+            self.assertEqual(manifest.read_bytes(), prior_manifest)
+
+        self.assertIn("missing_output", {item.code for item in raised.exception.findings})
+
+    def test_manifest_change_during_final_inventory_is_preserved_and_blocks_commit(self):
+        with projection_repository() as root:
+            write_projection(root, build_projection(root))
+            manifest = root / ".sdd/generated-files.json"
+            external_manifest = b'{"external": true}\n'
+            source = root / ".sdd/modules/workflows/release.md"
+            source.write_text("# Desired release workflow\n", encoding="utf-8")
+            desired = build_projection(root)
+            real_verify = compatibility._verify_live_outputs
+
+            def change_manifest_after_final_inventory(*args, **kwargs):
+                findings = real_verify(*args, **kwargs)
+                manifest.write_bytes(external_manifest)
+                return findings
+
+            with mock.patch.object(
+                compatibility,
+                "_verify_live_outputs",
+                change_manifest_after_final_inventory,
+            ):
+                with self.assertRaises(ProjectionFailure) as raised:
+                    write_projection(root, desired)
+
+            self.assertEqual(manifest.read_bytes(), external_manifest)
+
+        self.assertIn("invalid_manifest", {item.code for item in raised.exception.findings})
 
     def test_target_edit_during_staged_payload_read_blocks_replacement(self):
         with projection_repository() as root:

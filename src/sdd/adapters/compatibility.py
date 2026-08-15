@@ -59,13 +59,31 @@ class _ParentIdentity:
 
 
 def build_projection(root: Path) -> ProjectionPlan:
-    repository = _validated_repository_root(root)
-    entries = _discover_projection_entries(repository)
-    return _projection_plan(entries)
+    try:
+        repository = _validated_repository_root(root)
+        entries = _discover_projection_entries(repository)
+        return _projection_plan(entries)
+    except ProjectionFailure:
+        raise
+    except (OSError, RuntimeError, ValueError, UnicodeError):
+        raise ProjectionFailure(
+            (Finding("technical_block", None, "projection could not be planned safely"),)
+        ) from None
 
 
 def load_manifest(root: Path) -> ProjectionPlan:
     """Load the tracked ownership manifest only when it is safe and canonical."""
+    try:
+        return _load_manifest(root)
+    except ProjectionFailure:
+        raise
+    except (OSError, RuntimeError, ValueError, UnicodeError):
+        raise ProjectionFailure(
+            (Finding("technical_block", MANIFEST_PATH, "manifest could not be loaded safely"),)
+        ) from None
+
+
+def _load_manifest(root: Path) -> ProjectionPlan:
     repository = _validated_repository_root(root)
     manifest = repository / MANIFEST_PATH
     _require_manifest_file(repository, manifest)
@@ -104,6 +122,17 @@ def load_manifest(root: Path) -> ProjectionPlan:
 
 def check_projection(root: Path, plan: ProjectionPlan) -> tuple[Finding, ...]:
     """Return output-state differences without modifying the repository."""
+    try:
+        return _check_projection(root, plan)
+    except ProjectionFailure:
+        raise
+    except (OSError, RuntimeError, ValueError, UnicodeError):
+        return (
+            Finding("technical_block", None, "projection could not be checked safely"),
+        )
+
+
+def _check_projection(root: Path, plan: ProjectionPlan) -> tuple[Finding, ...]:
     repository = _validated_repository_root(root)
     try:
         previous = load_manifest(repository)
@@ -111,6 +140,14 @@ def check_projection(root: Path, plan: ProjectionPlan) -> tuple[Finding, ...]:
         return _sorted_check_findings(list(failure.findings))
 
     findings: list[Finding] = []
+    if previous != plan:
+        findings.append(
+            Finding(
+                "invalid_manifest",
+                MANIFEST_PATH,
+                "manifest does not match the desired projection",
+            )
+        )
     artifacts = _discover_compatibility_artifacts(repository, findings)
     expected = {entry.target: entry for entry in plan.entries}
     prior = {entry.target: entry for entry in previous.entries}
@@ -156,6 +193,19 @@ def check_projection(root: Path, plan: ProjectionPlan) -> tuple[Finding, ...]:
 
 def write_projection(root: Path, plan: ProjectionPlan) -> None:
     """Safely converge compatibility outputs to an already-built plan."""
+    try:
+        _write_projection(root, plan)
+    except ProjectionFailure:
+        raise
+    except (OSError, RuntimeError, ValueError, UnicodeError):
+        raise ProjectionFailure(
+            _sorted_findings(
+                [Finding("technical_block", None, "projection could not be applied safely")]
+            )
+        ) from None
+
+
+def _write_projection(root: Path, plan: ProjectionPlan) -> None:
     repository = _validated_repository_root(root)
     prior = _load_optional_manifest(repository)
     findings, parent_identities = _preflight_details(repository, prior, plan)
@@ -171,7 +221,7 @@ def write_projection(root: Path, plan: ProjectionPlan) -> None:
 
         previous = {} if prior is None else {entry.target: entry for entry in prior.entries}
         desired = {entry.target: entry for entry in plan.entries}
-        created_parents: set[Path] = set()
+        created_parents: dict[Path, _ParentIdentity] = {}
 
         for target in sorted(desired, key=lambda item: item.as_posix()):
             entry = desired[target]
@@ -196,6 +246,9 @@ def write_projection(root: Path, plan: ProjectionPlan) -> None:
                     )
                 )
             if current != (entry.output_sha256, entry.executable):
+                parent_identities[path.parent] = _recheck_parent(
+                    repository, parent_identities[path.parent], created_parents
+                )
                 _replace_file(path, payload, entry.executable)
 
         for target in sorted(previous.keys() - desired.keys(), key=lambda item: item.as_posix()):
@@ -216,6 +269,9 @@ def write_projection(root: Path, plan: ProjectionPlan) -> None:
                     )
                 )
             if current is not None:
+                parent_identities[path.parent] = _recheck_parent(
+                    repository, parent_identities[path.parent], created_parents
+                )
                 _remove_owned_file(path)
 
         manifest = repository / MANIFEST_PATH
@@ -236,11 +292,26 @@ def write_projection(root: Path, plan: ProjectionPlan) -> None:
                     ),
                 )
             )
+        _recheck_created_parents(repository, created_parents)
+        final_findings = _verify_live_outputs(repository, plan, prior)
+        if final_findings:
+            raise ProjectionFailure(final_findings)
+        current_manifest = _manifest_state(manifest)
+        if current_manifest not in accepted_manifests:
+            raise ProjectionFailure(
+                (
+                    Finding(
+                        "invalid_manifest",
+                        MANIFEST_PATH,
+                        "manifest changed during final output verification",
+                    ),
+                )
+            )
         if current_manifest != plan.manifest_bytes:
             _replace_file(manifest, plan.manifest_bytes, False)
     except ProjectionFailure:
         raise
-    except (OSError, RuntimeError):
+    except (OSError, RuntimeError, ValueError, UnicodeError):
         raise ProjectionFailure(
             _sorted_findings(
                 [Finding("technical_block", None, "projection could not be applied safely")]
@@ -349,6 +420,44 @@ def _validate_desired_plan(desired: ProjectionPlan) -> tuple[Finding, ...]:
             )
     _append_collision_findings(entries, findings)
     return _sorted_findings(findings)
+
+
+def _verify_live_outputs(
+    root: Path, desired: ProjectionPlan, prior: ProjectionPlan | None
+) -> tuple[Finding, ...]:
+    findings: list[Finding] = []
+    artifacts = _discover_compatibility_artifacts(root, findings)
+    expected = {entry.target: entry for entry in desired.entries}
+    previous = {} if prior is None else {entry.target: entry for entry in prior.entries}
+
+    for target in sorted(expected, key=lambda item: item.as_posix()):
+        wanted = expected[target]
+        artifact = artifacts.pop(target, None)
+        if artifact is None:
+            findings.append(Finding("missing_output", target, "expected output is missing"))
+            continue
+        if artifact is _UNSAFE_ARTIFACT:
+            continue
+        if _matches(artifact, wanted):
+            continue
+        owned = previous.get(target)
+        if owned is not None and _matches(artifact, owned) and not _same_output(wanted, owned):
+            findings.append(Finding("stale_output", target, "output matches prior ownership"))
+        else:
+            findings.append(
+                Finding("conflicting_output", target, "output matches neither desired nor prior")
+            )
+
+    for target, artifact in artifacts.items():
+        if artifact is _UNSAFE_ARTIFACT:
+            continue
+        if target in previous:
+            findings.append(
+                Finding("extra_managed_output", target, "removed output is still present")
+            )
+        else:
+            findings.append(Finding("unexpected_output", target, "output is not managed"))
+    return _sorted_check_findings(findings)
 
 
 def _stage_projection(root: Path, desired: ProjectionPlan) -> Path:
@@ -532,8 +641,11 @@ def _capture_parent_identity(
 
 
 def _recheck_parent(
-    root: Path, expected: _ParentIdentity, created_parents: set[Path]
+    root: Path,
+    expected: _ParentIdentity,
+    created_parents: dict[Path, _ParentIdentity],
 ) -> _ParentIdentity:
+    _recheck_created_parents(root, created_parents)
     current, findings = _capture_parent_identity(root, expected.parent)
     if findings or current is None:
         raise ProjectionFailure(findings)
@@ -570,22 +682,29 @@ def _recheck_parent(
 
     for part in expected.missing_parts:
         candidate = directory / part
+        _recheck_created_parents(root, created_parents)
         try:
             candidate.mkdir(mode=0o755)
-            created_parents.add(candidate)
         except FileExistsError:
-            info = candidate.lstat()
-            if (
-                candidate not in created_parents
-                or stat.S_ISLNK(info.st_mode)
-                or not stat.S_ISDIR(info.st_mode)
-            ):
+            if candidate not in created_parents:
                 path = PurePosixPath(candidate.relative_to(root).as_posix())
                 raise ProjectionFailure(
                     (Finding("unsafe_path", path, "target parent changed during creation"),)
                 )
+            _recheck_created_parents(root, created_parents)
+        else:
+            created, created_findings = _capture_parent_identity(root, candidate)
+            if created_findings or created is None:
+                raise ProjectionFailure(created_findings)
+            if created.missing_parts:
+                path = PurePosixPath(candidate.relative_to(root).as_posix())
+                raise ProjectionFailure(
+                    (Finding("technical_block", path, "target parent could not be created"),)
+                )
+            created_parents[candidate] = created
         directory = candidate
 
+    _recheck_created_parents(root, created_parents)
     created, created_findings = _capture_parent_identity(root, expected.parent)
     if created_findings or created is None:
         raise ProjectionFailure(created_findings)
@@ -595,6 +714,21 @@ def _recheck_parent(
             (Finding("technical_block", path, "target parent could not be created"),)
         )
     return created
+
+
+def _recheck_created_parents(
+    root: Path, created_parents: dict[Path, _ParentIdentity]
+) -> None:
+    for path in sorted(created_parents, key=lambda item: item.as_posix()):
+        expected = created_parents[path]
+        current, findings = _capture_parent_identity(root, path)
+        if findings:
+            raise ProjectionFailure(findings)
+        if current is None or current.missing_parts or current != expected:
+            target = PurePosixPath(path.relative_to(root).as_posix())
+            raise ProjectionFailure(
+                (Finding("unsafe_path", target, "created target parent changed during write"),)
+            )
 
 
 def _target_state(root: Path, path: Path) -> tuple[str, bool] | None:
@@ -914,8 +1048,12 @@ def _manifest_entry(value) -> ProjectionEntry:
 
 
 def _manifest_path(value) -> PurePosixPath:
-    if not isinstance(value, str) or not value or "\\" in value:
+    if not isinstance(value, str) or not value or "\\" in value or "\x00" in value:
         raise _invalid_manifest()
+    try:
+        os.fsencode(value)
+    except (ValueError, UnicodeError):
+        raise _invalid_manifest() from None
     path = PurePosixPath(value)
     if path.is_absolute() or path.as_posix() != value or any(
         part in ("", ".", "..") for part in path.parts

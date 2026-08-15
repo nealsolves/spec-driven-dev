@@ -54,7 +54,7 @@ def main(argv: list[str] | None = None) -> int:
     except ProjectionFailure as exc:
         render_findings(exc.findings)
         return 3 if any(item.code == "technical_block" for item in exc.findings) else 1
-    except (OSError, RuntimeError) as exc:
+    except (OSError, RuntimeError, ValueError, UnicodeError) as exc:
         print(f"ERROR: technical_block: {exc}")
         return 3
 
