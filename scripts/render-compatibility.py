@@ -10,15 +10,6 @@ sys.dont_write_bytecode = True
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPOSITORY_ROOT / "src"))
 
-from sdd.adapters.compatibility import (  # noqa: E402
-    Finding,
-    ProjectionFailure,
-    build_projection,
-    check_projection,
-    write_projection,
-)
-
-
 def parse_arguments(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--root", type=Path, required=True)
@@ -28,7 +19,7 @@ def parse_arguments(argv: list[str] | None = None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
-def render_findings(findings: tuple[Finding, ...]) -> None:
+def render_findings(findings) -> None:
     for finding in findings:
         path = "-" if finding.path is None else finding.path.as_posix()
         print(f"ERROR: {finding.code}: {path}: {finding.message}")
@@ -36,6 +27,17 @@ def render_findings(findings: tuple[Finding, ...]) -> None:
 
 def main(argv: list[str] | None = None) -> int:
     arguments = parse_arguments(argv)
+    try:
+        from sdd.adapters.compatibility import (
+            ProjectionFailure,
+            build_projection,
+            check_projection,
+            write_projection,
+        )
+    except (ImportError, OSError, RuntimeError) as exc:
+        print(f"ERROR: technical_block: {exc}")
+        return 3
+
     try:
         root = arguments.root.resolve(strict=True)
         plan = build_projection(root)

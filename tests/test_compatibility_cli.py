@@ -104,6 +104,15 @@ class CompatibilityCliTest(unittest.TestCase):
         self.assertIn("technical_block", result.stdout)
         self.assertNotIn("Traceback", result.stdout + result.stderr)
 
+    def test_broken_package_bootstrap_returns_three_without_traceback(self):
+        with projection_repository() as root:
+            self.prepare_script(root)
+            (root / "src/sdd/adapters/compatibility.py").unlink()
+            result = run_cli(root, "--check")
+        self.assertEqual(result.returncode, 3)
+        self.assertIn("technical_block", result.stdout)
+        self.assertNotIn("Traceback", result.stdout + result.stderr)
+
     def test_invalid_manifest_returns_one(self):
         with projection_repository() as root:
             self.prepare_script(root)
