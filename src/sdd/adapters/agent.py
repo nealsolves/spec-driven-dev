@@ -5,6 +5,7 @@ import hashlib
 import json
 import os
 import stat
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 
@@ -21,6 +22,12 @@ _MAX_LINES = 280
 _TARGET_LINES = 180
 _MAX_BYTES = 16384
 _OPEN_SUPPORTS_DIR_FD = os.open in os.supports_dir_fd
+_WRITE_SUPPORTS_DIR_FD = (
+    os.rename in os.supports_dir_fd
+    and os.stat in os.supports_dir_fd
+    and os.unlink in os.supports_dir_fd
+    and os.stat in os.supports_follow_symlinks
+)
 _UNSAFE_PATH_ERRNOS = frozenset(
     {errno.ENOENT, errno.ENOTDIR, errno.ELOOP, errno.EISDIR, errno.ENXIO}
 )
@@ -104,6 +111,33 @@ class AdapterFailure(Exception):
 class _RegularFileState:
     payload: bytes
     executable: bool
+    device: int
+    inode: int
+    permissions: int
+
+
+@dataclass(frozen=True)
+class _DirectoryIdentity:
+    resolved_path: Path
+    device: int
+    inode: int
+
+
+@dataclass(frozen=True)
+class _WritePreflight:
+    repository_identity: _DirectoryIdentity
+    sdd_identity: _DirectoryIdentity
+    prior_manifest: AdapterManifest | None
+    manifest_payload: bytes | None
+
+
+@dataclass
+class _PreparedAdapterFile:
+    parent_fd: int
+    temporary_name: str
+    device: int
+    inode: int
+    owned: bool = True
 
 
 def build_adapter_plan(root: Path) -> AdapterPlan:
@@ -205,6 +239,222 @@ def check_agent_adapters(root: Path, plan: AdapterPlan) -> tuple[AdapterFinding,
         )
 
 
+def write_agent_adapters(root: Path, plan: AdapterPlan) -> None:
+    """Safely converge the two fixed root adapters and commit ownership last."""
+    try:
+        _write_agent_adapters(root, plan)
+    except AdapterFailure:
+        raise
+    except (OSError, RuntimeError, TypeError, ValueError, UnicodeError):
+        raise AdapterFailure(
+            (
+                AdapterFinding(
+                    "technical_block",
+                    None,
+                    "agent adapters could not be written safely",
+                ),
+            )
+        ) from None
+
+
+def _write_agent_adapters(root: Path, plan: AdapterPlan) -> None:
+    _validate_manifest_plan(plan)
+    repository = _validated_repository_root(root)
+    desired_manifest = _serialize_adapter_manifest_unchecked(plan)
+    preflight = _preflight_adapter_write(repository, plan)
+    _require_safe_write_support()
+    prior_files = (
+        {}
+        if preflight.prior_manifest is None
+        else {item[0]: item for item in preflight.prior_manifest.files}
+    )
+
+    for output in plan.outputs:
+        target = repository / output.target
+        _recheck_write_parents(repository, preflight)
+        live = _read_regular_file_state(repository, output.target, allow_missing=True)
+        if not _accepted_output_state(live, output, prior_files.get(output.target)):
+            raise AdapterFailure(
+                (
+                    AdapterFinding(
+                        "conflicting_output",
+                        output.target,
+                        "adapter output changed after preflight",
+                    ),
+                )
+            )
+        if _live_matches_output(live, output):
+            continue
+
+        prepared = _prepare_adapter_file(
+            target,
+            output.payload,
+            preflight.repository_identity,
+            None,
+        )
+        try:
+            _validate_prepared_file(prepared, output.payload, output.target)
+            _recheck_write_parents(repository, preflight)
+            _validate_pinned_directory(
+                prepared.parent_fd,
+                preflight.repository_identity,
+                None,
+            )
+            live = _read_regular_file_state_at(
+                prepared.parent_fd,
+                output.target.name,
+                output.target,
+                allow_missing=True,
+            )
+            if not _accepted_output_state(live, output, prior_files.get(output.target)):
+                raise AdapterFailure(
+                    (
+                        AdapterFinding(
+                            "conflicting_output",
+                            output.target,
+                            "adapter output changed during temporary preparation",
+                        ),
+                    )
+                )
+            if not _live_matches_output(live, output):
+                _commit_prepared_file(prepared, output.target.name)
+                committed = _read_regular_file_state_at(
+                    prepared.parent_fd,
+                    output.target.name,
+                    output.target,
+                )
+                if not _live_matches_output(committed, output):
+                    raise AdapterFailure(
+                        (
+                            AdapterFinding(
+                                "conflicting_output",
+                                output.target,
+                                "committed adapter output failed immediate verification",
+                            ),
+                        )
+                    )
+                _recheck_write_parents(repository, preflight)
+        finally:
+            _discard_prepared_file(prepared)
+
+    verification_findings = _verify_written_outputs(repository, plan)
+    if verification_findings:
+        raise AdapterFailure(verification_findings)
+
+    _recheck_write_parents(repository, preflight)
+    live_manifest = _read_manifest_payload(repository)
+    if not _accepted_manifest_payload(live_manifest, desired_manifest, preflight):
+        raise AdapterFailure(
+            (
+                AdapterFinding(
+                    "invalid_manifest",
+                    MANIFEST_PATH,
+                    "adapter manifest changed after preflight",
+                ),
+            )
+        )
+
+    prepared_manifest: _PreparedAdapterFile | None = None
+    sdd_fd: int | None = None
+    root_fd: int | None = None
+    try:
+        if live_manifest != desired_manifest:
+            prepared_manifest = _prepare_adapter_file(
+                repository / MANIFEST_PATH,
+                desired_manifest,
+                preflight.sdd_identity,
+                MANIFEST_PATH.parent,
+            )
+            _validate_prepared_file(
+                prepared_manifest,
+                desired_manifest,
+                MANIFEST_PATH,
+            )
+            sdd_fd = prepared_manifest.parent_fd
+        else:
+            sdd_fd = _open_pinned_directory(
+                repository / MANIFEST_PATH.parent,
+                preflight.sdd_identity,
+                MANIFEST_PATH.parent,
+            )
+        root_fd = _open_pinned_directory(
+            repository,
+            preflight.repository_identity,
+            None,
+        )
+
+        _recheck_write_parents(repository, preflight)
+        _validate_pinned_directory(root_fd, preflight.repository_identity, None)
+        _validate_pinned_directory(sdd_fd, preflight.sdd_identity, MANIFEST_PATH.parent)
+        final_output_findings = _verify_outputs_from_parent_fd(root_fd, plan)
+        if final_output_findings:
+            raise AdapterFailure(final_output_findings)
+        final_manifest = _read_manifest_state_at(
+            sdd_fd,
+            allow_missing=True,
+        )
+        final_manifest_payload = None if final_manifest is None else final_manifest.payload
+        if (
+            (final_manifest is not None and final_manifest.executable)
+            or not _accepted_manifest_payload(
+                final_manifest_payload,
+                desired_manifest,
+                preflight,
+            )
+        ):
+            raise AdapterFailure(
+                (
+                    AdapterFinding(
+                        "invalid_manifest",
+                        MANIFEST_PATH,
+                        "adapter manifest changed during temporary preparation",
+                    ),
+                )
+            )
+
+        if final_manifest_payload != desired_manifest:
+            if prepared_manifest is None:
+                raise AdapterFailure(
+                    (
+                        AdapterFinding(
+                            "invalid_manifest",
+                            MANIFEST_PATH,
+                            "desired adapter manifest changed before final verification",
+                        ),
+                    )
+                )
+            _commit_prepared_file(prepared_manifest, MANIFEST_PATH.name)
+
+        committed_manifest = _read_manifest_state_at(
+            sdd_fd,
+        )
+        if (
+            committed_manifest is None
+            or committed_manifest.payload != desired_manifest
+            or committed_manifest.executable
+        ):
+            raise AdapterFailure(
+                (
+                    AdapterFinding(
+                        "invalid_manifest",
+                        MANIFEST_PATH,
+                        "committed adapter manifest failed immediate verification",
+                    ),
+                )
+            )
+        post_commit_findings = _verify_outputs_from_parent_fd(root_fd, plan)
+        if post_commit_findings:
+            raise AdapterFailure(post_commit_findings)
+        _recheck_write_parents(repository, preflight)
+    finally:
+        if root_fd is not None:
+            os.close(root_fd)
+        if prepared_manifest is not None:
+            _discard_prepared_file(prepared_manifest)
+        elif sdd_fd is not None:
+            os.close(sdd_fd)
+
+
 def _check_agent_adapters(root: Path, plan: AdapterPlan) -> tuple[AdapterFinding, ...]:
     repository = _validated_repository_root(root)
     plan_findings, inventory_is_safe = _manifest_plan_findings(plan)
@@ -286,17 +536,477 @@ def _check_agent_adapters(root: Path, plan: AdapterPlan) -> tuple[AdapterFinding
     return _sorted_findings(findings)
 
 
+def _preflight_adapter_write(repository: Path, plan: AdapterPlan) -> _WritePreflight:
+    findings: list[AdapterFinding] = []
+    repository_identity: _DirectoryIdentity | None = None
+    sdd_identity: _DirectoryIdentity | None = None
+    try:
+        repository_identity = _capture_directory_identity(repository, None)
+    except AdapterFailure as failure:
+        findings.extend(failure.findings)
+    try:
+        sdd_identity = _capture_directory_identity(
+            repository / MANIFEST_PATH.parent,
+            MANIFEST_PATH.parent,
+        )
+    except AdapterFailure as failure:
+        findings.extend(failure.findings)
+
+    prior_manifest: AdapterManifest | None = None
+    manifest_payload: bytes | None = None
+    try:
+        manifest_state = _read_regular_file_state(
+            repository,
+            MANIFEST_PATH,
+            allow_missing=True,
+        )
+        if manifest_state is not None:
+            manifest_payload = manifest_state.payload
+            if manifest_state.executable:
+                raise _invalid_manifest()
+            prior_manifest = _parse_adapter_manifest(manifest_state.payload)
+    except AdapterFailure as failure:
+        findings.extend(_writer_manifest_findings(failure))
+
+    prior_files = (
+        {} if prior_manifest is None else {item[0]: item for item in prior_manifest.files}
+    )
+    for output in plan.outputs:
+        try:
+            live = _read_regular_file_state(
+                repository,
+                output.target,
+                allow_missing=True,
+            )
+        except AdapterFailure as failure:
+            findings.extend(failure.findings)
+            continue
+        if not _accepted_output_state(live, output, prior_files.get(output.target)):
+            findings.append(
+                AdapterFinding(
+                    "conflicting_output",
+                    output.target,
+                    "adapter output matches neither desired nor prior ownership",
+                )
+            )
+
+    if findings:
+        raise AdapterFailure(_sorted_findings(findings))
+    assert repository_identity is not None
+    assert sdd_identity is not None
+    return _WritePreflight(
+        repository_identity=repository_identity,
+        sdd_identity=sdd_identity,
+        prior_manifest=prior_manifest,
+        manifest_payload=manifest_payload,
+    )
+
+
+def _capture_directory_identity(
+    path: Path,
+    relative: PurePosixPath | None,
+) -> _DirectoryIdentity:
+    try:
+        before = path.lstat()
+        if stat.S_ISLNK(before.st_mode) or not stat.S_ISDIR(before.st_mode):
+            raise AdapterFailure(
+                (
+                    AdapterFinding(
+                        "unsafe_path",
+                        relative,
+                        "write parent is not a safe directory",
+                    ),
+                )
+            )
+        resolved = path.resolve(strict=True)
+        after = path.lstat()
+    except AdapterFailure:
+        raise
+    except OSError as error:
+        code = "unsafe_path" if error.errno in _UNSAFE_PATH_ERRNOS else "technical_block"
+        message = (
+            "write parent is unavailable or unsafe"
+            if code == "unsafe_path"
+            else "write parent identity could not be inspected"
+        )
+        raise AdapterFailure(
+            (
+                AdapterFinding(
+                    code,
+                    relative,
+                    message,
+                ),
+            )
+        ) from None
+    except RuntimeError:
+        raise AdapterFailure(
+            (
+                AdapterFinding(
+                    "unsafe_path",
+                    relative,
+                    "write parent is unavailable or unsafe",
+                ),
+            )
+        ) from None
+    if (
+        stat.S_ISLNK(after.st_mode)
+        or not stat.S_ISDIR(after.st_mode)
+        or before.st_dev != after.st_dev
+        or before.st_ino != after.st_ino
+    ):
+        raise AdapterFailure(
+            (
+                AdapterFinding(
+                    "unsafe_path",
+                    relative,
+                    "write parent changed during inspection",
+                ),
+            )
+        )
+    return _DirectoryIdentity(
+        resolved_path=resolved,
+        device=after.st_dev,
+        inode=after.st_ino,
+    )
+
+
+def _recheck_write_parents(repository: Path, preflight: _WritePreflight) -> None:
+    current_repository = _capture_directory_identity(repository, None)
+    if current_repository != preflight.repository_identity:
+        raise AdapterFailure(
+            (
+                AdapterFinding(
+                    "unsafe_path",
+                    None,
+                    "repository root changed after preflight",
+                ),
+            )
+        )
+    current_sdd = _capture_directory_identity(
+        repository / MANIFEST_PATH.parent,
+        MANIFEST_PATH.parent,
+    )
+    if current_sdd != preflight.sdd_identity:
+        raise AdapterFailure(
+            (
+                AdapterFinding(
+                    "unsafe_path",
+                    MANIFEST_PATH.parent,
+                    ".sdd directory changed after preflight",
+                ),
+            )
+        )
+
+
+def _accepted_output_state(
+    live: _RegularFileState | None,
+    desired: AdapterOutput,
+    prior: tuple[PurePosixPath, str, int, int, bool] | None,
+) -> bool:
+    return (
+        live is None
+        or _live_matches_output(live, desired)
+        or (prior is not None and _live_matches_manifest_file(live, prior))
+    )
+
+
+def _live_matches_output(live: _RegularFileState | None, output: AdapterOutput) -> bool:
+    return live is not None and live.payload == output.payload and not live.executable
+
+
+def _verify_written_outputs(
+    repository: Path,
+    plan: AdapterPlan,
+) -> tuple[AdapterFinding, ...]:
+    findings: list[AdapterFinding] = []
+    for output in plan.outputs:
+        try:
+            live = _read_regular_file_state(
+                repository,
+                output.target,
+                allow_missing=True,
+            )
+        except AdapterFailure as failure:
+            findings.extend(failure.findings)
+            continue
+        if live is None:
+            findings.append(
+                AdapterFinding("missing_output", output.target, "adapter output is missing")
+            )
+        elif not _live_matches_output(live, output):
+            findings.append(
+                AdapterFinding(
+                    "conflicting_output",
+                    output.target,
+                    "adapter output changed during final verification",
+                )
+            )
+    return _sorted_findings(findings)
+
+
+def _verify_outputs_from_parent_fd(
+    repository_fd: int,
+    plan: AdapterPlan,
+) -> tuple[AdapterFinding, ...]:
+    findings: list[AdapterFinding] = []
+    for output in plan.outputs:
+        try:
+            live = _read_regular_file_state_at(
+                repository_fd,
+                output.target.name,
+                output.target,
+                allow_missing=True,
+            )
+        except AdapterFailure as failure:
+            findings.extend(failure.findings)
+            continue
+        if live is None:
+            findings.append(
+                AdapterFinding("missing_output", output.target, "adapter output is missing")
+            )
+        elif not _live_matches_output(live, output):
+            findings.append(
+                AdapterFinding(
+                    "conflicting_output",
+                    output.target,
+                    "adapter output changed at the manifest commit boundary",
+                )
+            )
+    return _sorted_findings(findings)
+
+
+def _read_manifest_payload(repository: Path) -> bytes | None:
+    try:
+        state = _read_regular_file_state(repository, MANIFEST_PATH, allow_missing=True)
+    except AdapterFailure as failure:
+        raise AdapterFailure(_writer_manifest_findings(failure)) from None
+    if state is None:
+        return None
+    if state.executable:
+        raise _invalid_manifest()
+    return state.payload
+
+
+def _read_manifest_state_at(
+    sdd_fd: int,
+    *,
+    allow_missing: bool = False,
+) -> _RegularFileState | None:
+    try:
+        return _read_regular_file_state_at(
+            sdd_fd,
+            MANIFEST_PATH.name,
+            MANIFEST_PATH,
+            allow_missing=allow_missing,
+        )
+    except AdapterFailure as failure:
+        raise AdapterFailure(_writer_manifest_findings(failure)) from None
+
+
+def _accepted_manifest_payload(
+    live: bytes | None,
+    desired: bytes,
+    preflight: _WritePreflight,
+) -> bool:
+    return live in {None, desired, preflight.manifest_payload}
+
+
+def _writer_manifest_findings(
+    failure: AdapterFailure,
+) -> tuple[AdapterFinding, ...]:
+    if any(finding.code == "technical_block" for finding in failure.findings):
+        return failure.findings
+    return _invalid_manifest().findings
+
+
+def _require_safe_write_support() -> None:
+    required_flags = ("O_DIRECTORY", "O_NOFOLLOW", "O_NONBLOCK")
+    if (
+        not _OPEN_SUPPORTS_DIR_FD
+        or not _WRITE_SUPPORTS_DIR_FD
+        or any(not hasattr(os, name) for name in required_flags)
+    ):
+        raise AdapterFailure(
+            (
+                AdapterFinding(
+                    "technical_block",
+                    None,
+                    "safe descriptor-relative replacement is unavailable",
+                ),
+            )
+        )
+
+
+def _open_pinned_directory(
+    path: Path,
+    expected: _DirectoryIdentity,
+    relative: PurePosixPath | None,
+) -> int:
+    directory_flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+    close_on_exec = getattr(os, "O_CLOEXEC", 0)
+    try:
+        directory_fd = os.open(path, directory_flags | close_on_exec)
+    except OSError as error:
+        raise _inspection_failure(relative, error) from None
+    try:
+        _validate_pinned_directory(directory_fd, expected, relative)
+        return directory_fd
+    except BaseException:
+        os.close(directory_fd)
+        raise
+
+
+def _validate_pinned_directory(
+    directory_fd: int,
+    expected: _DirectoryIdentity,
+    relative: PurePosixPath | None,
+) -> None:
+    try:
+        info = os.fstat(directory_fd)
+    except OSError:
+        raise AdapterFailure(
+            (
+                AdapterFinding(
+                    "technical_block",
+                    relative,
+                    "pinned write parent could not be inspected",
+                ),
+            )
+        ) from None
+    if (
+        not stat.S_ISDIR(info.st_mode)
+        or info.st_dev != expected.device
+        or info.st_ino != expected.inode
+    ):
+        raise AdapterFailure(
+            (
+                AdapterFinding(
+                    "unsafe_path",
+                    relative,
+                    "pinned write parent does not match preflight identity",
+                ),
+            )
+        )
+
+
+def _prepare_adapter_file(
+    path: Path,
+    payload: bytes,
+    expected_parent: _DirectoryIdentity,
+    parent_relative: PurePosixPath | None,
+) -> _PreparedAdapterFile:
+    parent_fd = _open_pinned_directory(path.parent, expected_parent, parent_relative)
+    prepared: _PreparedAdapterFile | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="wb",
+            dir=path.parent,
+            prefix=f".{path.name}.",
+            delete=False,
+        ) as temporary:
+            info = os.fstat(temporary.fileno())
+            prepared = _PreparedAdapterFile(
+                parent_fd=parent_fd,
+                temporary_name=Path(temporary.name).name,
+                device=info.st_dev,
+                inode=info.st_ino,
+            )
+            temporary.write(payload)
+            temporary.flush()
+            os.fsync(temporary.fileno())
+            os.fchmod(temporary.fileno(), 0o644)
+            os.fsync(temporary.fileno())
+        _validate_prepared_file(prepared, payload, PurePosixPath(path.name))
+        return prepared
+    except BaseException:
+        if prepared is not None:
+            _discard_prepared_file(prepared)
+        else:
+            os.close(parent_fd)
+        raise
+
+
+def _validate_prepared_file(
+    prepared: _PreparedAdapterFile,
+    payload: bytes,
+    relative: PurePosixPath,
+) -> None:
+    state = _read_regular_file_state_at(
+        prepared.parent_fd,
+        prepared.temporary_name,
+        relative,
+    )
+    if (
+        state is None
+        or state.device != prepared.device
+        or state.inode != prepared.inode
+        or state.payload != payload
+        or state.permissions != 0o644
+    ):
+        raise AdapterFailure(
+            (
+                AdapterFinding(
+                    "unsafe_path",
+                    relative,
+                    "prepared adapter temporary changed before commit",
+                ),
+            )
+        )
+
+
+def _commit_prepared_file(
+    prepared: _PreparedAdapterFile,
+    destination_name: str,
+) -> None:
+    os.replace(
+        prepared.temporary_name,
+        destination_name,
+        src_dir_fd=prepared.parent_fd,
+        dst_dir_fd=prepared.parent_fd,
+    )
+    prepared.owned = False
+
+
+def _discard_prepared_file(prepared: _PreparedAdapterFile) -> None:
+    try:
+        if not prepared.owned:
+            return
+        try:
+            info = os.stat(
+                prepared.temporary_name,
+                dir_fd=prepared.parent_fd,
+                follow_symlinks=False,
+            )
+        except FileNotFoundError:
+            return
+        if (
+            stat.S_ISREG(info.st_mode)
+            and info.st_dev == prepared.device
+            and info.st_ino == prepared.inode
+        ):
+            os.unlink(prepared.temporary_name, dir_fd=prepared.parent_fd)
+            prepared.owned = False
+    finally:
+        os.close(prepared.parent_fd)
+
+
 def _validated_repository_root(root: Path) -> Path:
     repository = Path(root)
     try:
         mode = repository.lstat().st_mode
-    except OSError:
+    except OSError as error:
+        code = "unsafe_path" if error.errno in _UNSAFE_PATH_ERRNOS else "technical_block"
+        message = (
+            "repository root path is missing or unsafe"
+            if code == "unsafe_path"
+            else "repository root could not be inspected"
+        )
         raise AdapterFailure(
-            (AdapterFinding("technical_block", None, "repository root is unavailable"),)
+            (AdapterFinding(code, None, message),)
         ) from None
-    if not stat.S_ISDIR(mode):
+    if stat.S_ISLNK(mode) or not stat.S_ISDIR(mode):
         raise AdapterFailure(
-            (AdapterFinding("technical_block", None, "repository root is not a safe directory"),)
+            (AdapterFinding("unsafe_path", None, "repository root is not a safe directory"),)
         )
     return repository
 
@@ -360,7 +1070,8 @@ def _read_regular_file_state(
                 return None
             raise
         opened_fds.append(file_fd)
-        file_mode = os.fstat(file_fd).st_mode
+        file_info = os.fstat(file_fd)
+        file_mode = file_info.st_mode
         if not stat.S_ISREG(file_mode):
             raise AdapterFailure(
                 (AdapterFinding("unsafe_path", relative, "path is not a regular file"),)
@@ -371,6 +1082,9 @@ def _read_regular_file_state(
         return _RegularFileState(
             payload=b"".join(chunks),
             executable=bool(file_mode & 0o111),
+            device=file_info.st_dev,
+            inode=file_info.st_ino,
+            permissions=stat.S_IMODE(file_mode),
         )
     except AdapterFailure:
         raise
@@ -381,7 +1095,54 @@ def _read_regular_file_state(
             os.close(opened_fd)
 
 
-def _inspection_failure(relative: PurePosixPath, error: OSError) -> AdapterFailure:
+def _read_regular_file_state_at(
+    parent_fd: int,
+    name: str,
+    relative: PurePosixPath,
+    *,
+    allow_missing: bool = False,
+) -> _RegularFileState | None:
+    file_flags = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK
+    close_on_exec = getattr(os, "O_CLOEXEC", 0)
+    try:
+        try:
+            file_fd = os.open(
+                name,
+                file_flags | close_on_exec,
+                dir_fd=parent_fd,
+            )
+        except FileNotFoundError:
+            if allow_missing:
+                return None
+            raise
+        try:
+            info = os.fstat(file_fd)
+            if not stat.S_ISREG(info.st_mode):
+                raise AdapterFailure(
+                    (AdapterFinding("unsafe_path", relative, "path is not a regular file"),)
+                )
+            chunks: list[bytes] = []
+            while chunk := os.read(file_fd, 65536):
+                chunks.append(chunk)
+            return _RegularFileState(
+                payload=b"".join(chunks),
+                executable=bool(info.st_mode & 0o111),
+                device=info.st_dev,
+                inode=info.st_ino,
+                permissions=stat.S_IMODE(info.st_mode),
+            )
+        finally:
+            os.close(file_fd)
+    except AdapterFailure:
+        raise
+    except OSError as error:
+        raise _inspection_failure(relative, error) from None
+
+
+def _inspection_failure(
+    relative: PurePosixPath | None,
+    error: OSError,
+) -> AdapterFailure:
     if error.errno in _UNSAFE_PATH_ERRNOS:
         return AdapterFailure(
             (AdapterFinding("unsafe_path", relative, "path is missing, unsafe, or not regular"),)
