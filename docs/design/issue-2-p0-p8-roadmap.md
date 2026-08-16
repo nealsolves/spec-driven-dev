@@ -1,7 +1,7 @@
 # Issue #2 P0-P8 Roadmap Design
 
-Status: Approved  
-Date: 2026-08-13  
+Status: Approved
+Date: 2026-08-13
 Parent epic: [#2 — Reduce operational friction identified by the AEGIS dogfood run](https://github.com/nealsolves/spec-driven-dev/issues/2)
 
 ## Purpose
