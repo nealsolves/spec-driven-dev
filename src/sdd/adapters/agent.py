@@ -1,6 +1,8 @@
 """Build deterministic root-agent adapter plans from one canonical kernel."""
 
+import errno
 import hashlib
+import json
 import os
 import stat
 from dataclasses import dataclass
@@ -19,6 +21,9 @@ _MAX_LINES = 280
 _TARGET_LINES = 180
 _MAX_BYTES = 16384
 _OPEN_SUPPORTS_DIR_FD = os.open in os.supports_dir_fd
+_UNSAFE_PATH_ERRNOS = frozenset(
+    {errno.ENOENT, errno.ENOTDIR, errno.ELOOP, errno.EISDIR, errno.ENXIO}
+)
 _OUTPUTS = {"claude": PurePosixPath("CLAUDE.md"), "codex": PurePosixPath("AGENTS.md")}
 _PREAMBLES = {
     "claude": (
@@ -70,6 +75,19 @@ class AdapterPlan:
 
 
 @dataclass(frozen=True)
+class AdapterManifest:
+    format: int
+    renderer: str
+    adapter_format: int
+    config_path: PurePosixPath
+    config_sha256: str
+    kernel_path: PurePosixPath
+    kernel_sha256: str
+    files: tuple[tuple[PurePosixPath, str, int, int, bool], ...]
+    raw_bytes: bytes
+
+
+@dataclass(frozen=True)
 class AdapterFinding:
     code: str
     path: PurePosixPath | None
@@ -80,6 +98,12 @@ class AdapterFailure(Exception):
     def __init__(self, findings: tuple[AdapterFinding, ...]):
         super().__init__("agent adapter planning failed")
         self.findings = findings
+
+
+@dataclass(frozen=True)
+class _RegularFileState:
+    payload: bytes
+    executable: bool
 
 
 def build_adapter_plan(root: Path) -> AdapterPlan:
@@ -106,6 +130,162 @@ def build_adapter_plan(root: Path) -> AdapterPlan:
         ) from None
 
 
+def serialize_adapter_manifest(plan: AdapterPlan) -> bytes:
+    """Serialize a complete adapter plan as canonical ownership JSON."""
+    _validate_manifest_plan(plan)
+    return _serialize_adapter_manifest_unchecked(plan)
+
+
+def _serialize_adapter_manifest_unchecked(plan: AdapterPlan) -> bytes:
+    payload = {
+        "format": _FORMAT,
+        "renderer": RENDERER,
+        "adapter_format": plan.format,
+        "config": {
+            "path": CONTROL_PATH.as_posix(),
+            "sha256": plan.config_sha256,
+        },
+        "kernel": {
+            "path": KERNEL_PATH.as_posix(),
+            "sha256": plan.kernel_sha256,
+        },
+        "files": [
+            {
+                "path": output.target.as_posix(),
+                "sha256": output.sha256,
+                "bytes": output.byte_count,
+                "lines": output.line_count,
+                "executable": False,
+            }
+            for output in plan.outputs
+        ],
+    }
+    return (json.dumps(payload, sort_keys=True, indent=2) + "\n").encode("utf-8")
+
+
+def load_adapter_manifest(root: Path) -> AdapterManifest:
+    """Load the ownership manifest only when it is safe, strict, and canonical."""
+    try:
+        repository = _validated_repository_root(root)
+        try:
+            state = _read_regular_file_state(repository, MANIFEST_PATH)
+        except AdapterFailure as failure:
+            if all(finding.code == "unsafe_path" for finding in failure.findings):
+                raise _invalid_manifest() from None
+            raise
+        assert state is not None
+        return _parse_adapter_manifest(state.payload)
+    except AdapterFailure:
+        raise
+    except (OSError, RuntimeError, TypeError, ValueError, UnicodeError, json.JSONDecodeError):
+        raise AdapterFailure(
+            (
+                AdapterFinding(
+                    "technical_block",
+                    MANIFEST_PATH,
+                    "adapter manifest could not be loaded safely",
+                ),
+            )
+        ) from None
+
+
+def check_agent_adapters(root: Path, plan: AdapterPlan) -> tuple[AdapterFinding, ...]:
+    """Return manifest and live-output parity findings without mutation."""
+    try:
+        return _check_agent_adapters(root, plan)
+    except AdapterFailure as failure:
+        return _sorted_findings(list(failure.findings))
+    except (OSError, RuntimeError, TypeError, ValueError, UnicodeError):
+        return (
+            AdapterFinding(
+                "technical_block",
+                None,
+                "agent adapters could not be checked safely",
+            ),
+        )
+
+
+def _check_agent_adapters(root: Path, plan: AdapterPlan) -> tuple[AdapterFinding, ...]:
+    repository = _validated_repository_root(root)
+    plan_findings, inventory_is_safe = _manifest_plan_findings(plan)
+    if not inventory_is_safe:
+        return _sorted_findings(list(plan_findings))
+    findings = list(plan_findings)
+    desired_manifest = (
+        _manifest_from_plan_unchecked(plan)
+        if all(finding.code == "limit_exceeded" for finding in plan_findings)
+        else None
+    )
+    prior: AdapterManifest | None
+    try:
+        prior = load_adapter_manifest(repository)
+    except AdapterFailure as failure:
+        findings.extend(failure.findings)
+        prior = None
+
+    if prior is not None and desired_manifest is not None:
+        stale_source = False
+        if prior.config_sha256 != plan.config_sha256:
+            stale_source = True
+            findings.append(
+                AdapterFinding(
+                    "invalid_source",
+                    CONTROL_PATH,
+                    "manifest records a different adapter control digest",
+                )
+            )
+        if prior.kernel_sha256 != plan.kernel_sha256:
+            stale_source = True
+            findings.append(
+                AdapterFinding(
+                    "invalid_source",
+                    KERNEL_PATH,
+                    "manifest records a different kernel digest",
+                )
+            )
+        if not stale_source and prior != desired_manifest:
+            findings.append(
+                AdapterFinding(
+                    "invalid_manifest",
+                    MANIFEST_PATH,
+                    "manifest does not completely match the desired adapter plan",
+                )
+            )
+
+    desired_files = (
+        {} if desired_manifest is None else {item[0]: item for item in desired_manifest.files}
+    )
+    prior_files = {} if prior is None else {item[0]: item for item in prior.files}
+    for target in sorted(_OUTPUTS.values(), key=lambda path: path.as_posix()):
+        desired = desired_files.get(target)
+        try:
+            live = _read_regular_file_state(repository, target, allow_missing=True)
+        except AdapterFailure as failure:
+            findings.extend(failure.findings)
+            continue
+        if live is None:
+            findings.append(AdapterFinding("missing_output", target, "adapter output is missing"))
+            continue
+        if desired is None:
+            continue
+        if _live_matches_manifest_file(live, desired):
+            continue
+        owned = prior_files.get(target)
+        if owned is not None and _live_matches_manifest_file(live, owned):
+            findings.append(
+                AdapterFinding("stale_output", target, "adapter output matches prior ownership")
+            )
+        else:
+            findings.append(
+                AdapterFinding(
+                    "conflicting_output",
+                    target,
+                    "adapter output matches neither desired nor prior ownership",
+                )
+            )
+    return _sorted_findings(findings)
+
+
 def _validated_repository_root(root: Path) -> Path:
     repository = Path(root)
     try:
@@ -122,12 +302,23 @@ def _validated_repository_root(root: Path) -> Path:
 
 
 def _read_regular_file(repository: Path, relative: PurePosixPath) -> bytes:
+    state = _read_regular_file_state(repository, relative)
+    assert state is not None
+    return state.payload
+
+
+def _read_regular_file_state(
+    repository: Path,
+    relative: PurePosixPath,
+    *,
+    allow_missing: bool = False,
+) -> _RegularFileState | None:
     required_flags = ("O_DIRECTORY", "O_NOFOLLOW", "O_NONBLOCK")
     if not _OPEN_SUPPORTS_DIR_FD or any(not hasattr(os, name) for name in required_flags):
         raise AdapterFailure(
             (
                 AdapterFinding(
-                    "unsafe_path",
+                    "technical_block",
                     relative,
                     "safe descriptor traversal is unavailable",
                 ),
@@ -142,7 +333,9 @@ def _read_regular_file(repository: Path, relative: PurePosixPath) -> bytes:
         directory_fd = os.open(repository, directory_flags | close_on_exec)
         opened_fds.append(directory_fd)
         if not stat.S_ISDIR(os.fstat(directory_fd).st_mode):
-            raise OSError("unsafe repository root")
+            raise AdapterFailure(
+                (AdapterFinding("unsafe_path", relative, "repository root is not a directory"),)
+            )
 
         for part in relative.parts[:-1]:
             directory_fd = os.open(
@@ -152,27 +345,56 @@ def _read_regular_file(repository: Path, relative: PurePosixPath) -> bytes:
             )
             opened_fds.append(directory_fd)
             if not stat.S_ISDIR(os.fstat(directory_fd).st_mode):
-                raise OSError("unsafe canonical parent")
+                raise AdapterFailure(
+                    (AdapterFinding("unsafe_path", relative, "file parent is not a directory"),)
+                )
 
-        file_fd = os.open(
-            relative.name,
-            file_flags | close_on_exec,
-            dir_fd=directory_fd,
-        )
+        try:
+            file_fd = os.open(
+                relative.name,
+                file_flags | close_on_exec,
+                dir_fd=directory_fd,
+            )
+        except FileNotFoundError:
+            if allow_missing:
+                return None
+            raise
         opened_fds.append(file_fd)
-        if not stat.S_ISREG(os.fstat(file_fd).st_mode):
-            raise OSError("unsafe canonical source")
+        file_mode = os.fstat(file_fd).st_mode
+        if not stat.S_ISREG(file_mode):
+            raise AdapterFailure(
+                (AdapterFinding("unsafe_path", relative, "path is not a regular file"),)
+            )
         chunks: list[bytes] = []
         while chunk := os.read(file_fd, 65536):
             chunks.append(chunk)
-        return b"".join(chunks)
-    except OSError:
-        raise AdapterFailure(
-            (AdapterFinding("unsafe_path", relative, "canonical source is not a regular file"),)
-        ) from None
+        return _RegularFileState(
+            payload=b"".join(chunks),
+            executable=bool(file_mode & 0o111),
+        )
+    except AdapterFailure:
+        raise
+    except OSError as error:
+        raise _inspection_failure(relative, error) from None
     finally:
         for opened_fd in reversed(opened_fds):
             os.close(opened_fd)
+
+
+def _inspection_failure(relative: PurePosixPath, error: OSError) -> AdapterFailure:
+    if error.errno in _UNSAFE_PATH_ERRNOS:
+        return AdapterFailure(
+            (AdapterFinding("unsafe_path", relative, "path is missing, unsafe, or not regular"),)
+        )
+    return AdapterFailure(
+        (
+            AdapterFinding(
+                "technical_block",
+                relative,
+                "file state could not be inspected safely",
+            ),
+        )
+    )
 
 
 def _load_config(raw: bytes) -> AdapterConfig:
@@ -281,6 +503,254 @@ def _render_outputs(config: AdapterConfig, kernel: bytes) -> tuple[AdapterOutput
 def _invalid_config() -> AdapterFailure:
     return AdapterFailure(
         (AdapterFinding("invalid_config", CONTROL_PATH, "adapter control is not strict format 1"),)
+    )
+
+
+def _invalid_manifest() -> AdapterFailure:
+    return AdapterFailure(
+        (
+            AdapterFinding(
+                "invalid_manifest",
+                MANIFEST_PATH,
+                "adapter manifest is missing, unsafe, or invalid",
+            ),
+        )
+    )
+
+
+def _parse_adapter_manifest(raw: bytes) -> AdapterManifest:
+    try:
+        value = json.loads(raw.decode("utf-8"), object_pairs_hook=_unique_json_object)
+    except (UnicodeDecodeError, ValueError, json.JSONDecodeError):
+        raise _invalid_manifest() from None
+
+    if type(value) is not dict or set(value) != {
+        "format",
+        "renderer",
+        "adapter_format",
+        "config",
+        "kernel",
+        "files",
+    }:
+        raise _invalid_manifest()
+    if type(value["format"]) is not int or value["format"] != _FORMAT:
+        raise _invalid_manifest()
+    if value["renderer"] != RENDERER:
+        raise _invalid_manifest()
+    if type(value["adapter_format"]) is not int or value["adapter_format"] != _FORMAT:
+        raise _invalid_manifest()
+
+    config_path, config_sha256 = _manifest_source(
+        value["config"],
+        CONTROL_PATH,
+    )
+    kernel_path, kernel_sha256 = _manifest_source(
+        value["kernel"],
+        KERNEL_PATH,
+    )
+    if type(value["files"]) is not list:
+        raise _invalid_manifest()
+    files = tuple(_manifest_file(item) for item in value["files"])
+    if tuple(item[0] for item in files) != tuple(
+        sorted(_OUTPUTS.values(), key=lambda path: path.as_posix())
+    ):
+        raise _invalid_manifest()
+    canonical = (json.dumps(value, sort_keys=True, indent=2) + "\n").encode("utf-8")
+    if raw != canonical:
+        raise _invalid_manifest()
+    return AdapterManifest(
+        format=_FORMAT,
+        renderer=RENDERER,
+        adapter_format=_FORMAT,
+        config_path=config_path,
+        config_sha256=config_sha256,
+        kernel_path=kernel_path,
+        kernel_sha256=kernel_sha256,
+        files=files,
+        raw_bytes=raw,
+    )
+
+
+def _manifest_source(value: object, expected_path: PurePosixPath) -> tuple[PurePosixPath, str]:
+    if type(value) is not dict or set(value) != {"path", "sha256"}:
+        raise _invalid_manifest()
+    path = _manifest_path(value["path"])
+    if path != expected_path or not _is_sha256(value["sha256"]):
+        raise _invalid_manifest()
+    return path, value["sha256"]
+
+
+def _manifest_file(value: object) -> tuple[PurePosixPath, str, int, int, bool]:
+    if type(value) is not dict or set(value) != {
+        "path",
+        "sha256",
+        "bytes",
+        "lines",
+        "executable",
+    }:
+        raise _invalid_manifest()
+    path = _manifest_path(value["path"])
+    if not _is_sha256(value["sha256"]):
+        raise _invalid_manifest()
+    if type(value["bytes"]) is not int or value["bytes"] < 0:
+        raise _invalid_manifest()
+    if type(value["lines"]) is not int or value["lines"] < 0:
+        raise _invalid_manifest()
+    if value["executable"] is not False:
+        raise _invalid_manifest()
+    return (
+        path,
+        value["sha256"],
+        value["bytes"],
+        value["lines"],
+        False,
+    )
+
+
+def _manifest_path(value: object) -> PurePosixPath:
+    if type(value) is not str or not value or "\\" in value or "\x00" in value:
+        raise _invalid_manifest()
+    try:
+        os.fsencode(value)
+    except (ValueError, UnicodeError):
+        raise _invalid_manifest() from None
+    path = PurePosixPath(value)
+    if path.is_absolute() or path.as_posix() != value or any(
+        part in ("", ".", "..") for part in path.parts
+    ):
+        raise _invalid_manifest()
+    return path
+
+
+def _unique_json_object(pairs):
+    value = {}
+    for key, item in pairs:
+        if key in value:
+            raise ValueError("duplicate JSON object key")
+        value[key] = item
+    return value
+
+
+def _validate_manifest_plan(plan: AdapterPlan) -> None:
+    findings, _ = _manifest_plan_findings(plan)
+    if findings:
+        raise AdapterFailure(_sorted_findings(list(findings)))
+
+
+def _manifest_plan_findings(
+    plan: AdapterPlan,
+) -> tuple[tuple[AdapterFinding, ...], bool]:
+    expected_targets = tuple(sorted(_OUTPUTS.values(), key=lambda path: path.as_posix()))
+    if type(plan) is not AdapterPlan:
+        return (
+            (AdapterFinding("invalid_source", None, "adapter plan is incomplete or invalid"),),
+            False,
+        )
+    if (
+        type(plan.outputs) is not tuple
+        or len(plan.outputs) != len(expected_targets)
+        or any(type(output) is not AdapterOutput for output in plan.outputs)
+        or any(type(output.target) is not PurePosixPath for output in plan.outputs)
+        or tuple(output.target for output in plan.outputs) != expected_targets
+    ):
+        return (
+            (AdapterFinding("invalid_source", None, "adapter plan inventory is unsafe"),),
+            False,
+        )
+
+    findings: list[AdapterFinding] = []
+    if (
+        type(plan.format) is not int
+        or plan.format != _FORMAT
+        or plan.renderer != RENDERER
+        or not _is_sha256(plan.config_sha256)
+        or not _is_sha256(plan.kernel_sha256)
+    ):
+        findings.append(
+            AdapterFinding("invalid_source", None, "adapter plan is incomplete or invalid")
+        )
+    for output in plan.outputs:
+        if (
+            type(output.payload) is not bytes
+            or not _is_sha256(output.sha256)
+            or output.sha256 != _sha256(output.payload)
+            or type(output.byte_count) is not int
+            or output.byte_count != len(output.payload)
+            or type(output.line_count) is not int
+            or output.line_count != output.payload.count(b"\n")
+        ):
+            findings.append(
+                AdapterFinding("invalid_source", output.target, "adapter plan output is invalid")
+            )
+        if (
+            type(output.line_count) is int
+            and type(output.byte_count) is int
+            and (output.line_count > _MAX_LINES or output.byte_count > _MAX_BYTES)
+        ):
+            findings.append(
+                AdapterFinding(
+                    "limit_exceeded",
+                    output.target,
+                    "rendered adapter exceeds a hard size limit",
+                )
+            )
+    return tuple(findings), True
+
+
+def _manifest_from_plan_unchecked(plan: AdapterPlan) -> AdapterManifest:
+    raw = _serialize_adapter_manifest_unchecked(plan)
+    return AdapterManifest(
+        format=_FORMAT,
+        renderer=RENDERER,
+        adapter_format=plan.format,
+        config_path=CONTROL_PATH,
+        config_sha256=plan.config_sha256,
+        kernel_path=KERNEL_PATH,
+        kernel_sha256=plan.kernel_sha256,
+        files=tuple(
+            (
+                output.target,
+                output.sha256,
+                output.byte_count,
+                output.line_count,
+                False,
+            )
+            for output in plan.outputs
+        ),
+        raw_bytes=raw,
+    )
+
+
+def _live_matches_manifest_file(
+    live: _RegularFileState,
+    manifest_file: tuple[PurePosixPath, str, int, int, bool],
+) -> bool:
+    _, digest, byte_count, line_count, executable = manifest_file
+    return (
+        _sha256(live.payload) == digest
+        and len(live.payload) == byte_count
+        and live.payload.count(b"\n") == line_count
+        and live.executable is executable
+    )
+
+
+def _is_sha256(value: object) -> bool:
+    return (
+        type(value) is str
+        and len(value) == 64
+        and all(character in "0123456789abcdef" for character in value)
+    )
+
+
+def _sorted_findings(findings: list[AdapterFinding]) -> tuple[AdapterFinding, ...]:
+    return tuple(
+        sorted(
+            findings,
+            key=lambda finding: (
+                finding.path.as_posix() if finding.path is not None else "",
+                finding.code,
+            ),
+        )
     )
 
 

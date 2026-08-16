@@ -1,5 +1,7 @@
 import dataclasses
+import errno
 import hashlib
+import json
 import os
 import re
 import tempfile
@@ -370,6 +372,462 @@ class AdapterPlanningTest(unittest.TestCase):
             root = Path(directory) / "not-a-directory"
             root.write_text("file\n", encoding="utf-8")
             self.assert_plan_code(root, "technical_block")
+
+
+class AdapterCheckingTest(unittest.TestCase):
+    def initialize_parity(self, root: Path):
+        plan = build_adapter_plan(root)
+        for output in plan.outputs:
+            target = root / output.target
+            target.write_bytes(output.payload)
+            target.chmod(0o644)
+        (root / agent.MANIFEST_PATH).write_bytes(agent.serialize_adapter_manifest(plan))
+        return plan
+
+    def finding_codes(self, root: Path, plan) -> set[str]:
+        return {finding.code for finding in agent.check_agent_adapters(root, plan)}
+
+    def assert_invalid_manifest(self, root: Path) -> None:
+        with self.assertRaises(AdapterFailure) as raised:
+            agent.load_adapter_manifest(root)
+        self.assertEqual(
+            {finding.code for finding in raised.exception.findings},
+            {"invalid_manifest"},
+        )
+
+    def canonical_manifest_value(self, plan) -> dict:
+        return json.loads(agent.serialize_adapter_manifest(plan))
+
+    def write_canonical_manifest(self, root: Path, value: object) -> None:
+        (root / agent.MANIFEST_PATH).write_bytes(
+            (json.dumps(value, sort_keys=True, indent=2) + "\n").encode("utf-8")
+        )
+
+    def test_manifest_serialization_is_exact_canonical_json_and_loads_immutably(self):
+        with agent_adapter_repository() as root:
+            plan = build_adapter_plan(root)
+            agents, claude = plan.outputs
+            expected = f'''{{
+  "adapter_format": 1,
+  "config": {{
+    "path": ".sdd/controls/adapters.yaml",
+    "sha256": "{plan.config_sha256}"
+  }},
+  "files": [
+    {{
+      "bytes": {agents.byte_count},
+      "executable": false,
+      "lines": {agents.line_count},
+      "path": "AGENTS.md",
+      "sha256": "{agents.sha256}"
+    }},
+    {{
+      "bytes": {claude.byte_count},
+      "executable": false,
+      "lines": {claude.line_count},
+      "path": "CLAUDE.md",
+      "sha256": "{claude.sha256}"
+    }}
+  ],
+  "format": 1,
+  "kernel": {{
+    "path": ".sdd/adapters/root-kernel.md",
+    "sha256": "{plan.kernel_sha256}"
+  }},
+  "renderer": "sdd.adapters.agent:v1"
+}}
+'''.encode("utf-8")
+            raw = agent.serialize_adapter_manifest(plan)
+            (root / agent.MANIFEST_PATH).write_bytes(raw)
+            manifest = agent.load_adapter_manifest(root)
+
+        self.assertEqual(raw, expected)
+        self.assertEqual(manifest.raw_bytes, expected)
+        self.assertEqual(
+            tuple(item[0].as_posix() for item in manifest.files),
+            ("AGENTS.md", "CLAUDE.md"),
+        )
+        with self.assertRaises(dataclasses.FrozenInstanceError):
+            manifest.renderer = "changed"  # type: ignore[misc]
+
+    def test_manifest_rejects_missing_malformed_noncanonical_and_duplicate_keys(self):
+        with agent_adapter_repository() as root:
+            plan = build_adapter_plan(root)
+            manifest = root / agent.MANIFEST_PATH
+            invalid = (
+                b"{",
+                b"[]\n",
+                agent.serialize_adapter_manifest(plan).replace(
+                    b'  "format": 1,\n', b'  "format": 1,\n  "format": 1,\n'
+                ),
+                json.dumps(self.canonical_manifest_value(plan), separators=(",", ":")).encode(
+                    "utf-8"
+                ),
+            )
+            self.assert_invalid_manifest(root)
+            for raw in invalid:
+                with self.subTest(raw=raw[:40]):
+                    manifest.write_bytes(raw)
+                    self.assert_invalid_manifest(root)
+
+    def test_manifest_rejects_every_non_strict_field_variant(self):
+        def missing_root(value):
+            value.pop("renderer")
+
+        def unknown_root(value):
+            value["host"] = "local"
+
+        def boolean_format(value):
+            value["format"] = True
+
+        def wrong_renderer(value):
+            value["renderer"] = "other:v1"
+
+        def missing_nested(value):
+            value["config"].pop("path")
+
+        def unknown_file_key(value):
+            value["files"][0]["mtime"] = 0
+
+        def uppercase_digest(value):
+            value["kernel"]["sha256"] = "A" * 64
+
+        def short_digest(value):
+            value["files"][0]["sha256"] = "0" * 63
+
+        def negative_count(value):
+            value["files"][0]["bytes"] = -1
+
+        def boolean_count(value):
+            value["files"][0]["lines"] = False
+
+        def executable_true(value):
+            value["files"][0]["executable"] = True
+
+        def executable_integer(value):
+            value["files"][0]["executable"] = 0
+
+        def wrong_config_path(value):
+            value["config"]["path"] = ".sdd/controls/other.yaml"
+
+        def wrong_kernel_path(value):
+            value["kernel"]["path"] = ".sdd/adapters/other.md"
+
+        def wrong_output_path(value):
+            value["files"][0]["path"] = "OTHER.md"
+
+        def reversed_outputs(value):
+            value["files"].reverse()
+
+        def duplicate_outputs(value):
+            value["files"][1] = dict(value["files"][0])
+
+        mutations = (
+            missing_root,
+            unknown_root,
+            boolean_format,
+            wrong_renderer,
+            missing_nested,
+            unknown_file_key,
+            uppercase_digest,
+            short_digest,
+            negative_count,
+            boolean_count,
+            executable_true,
+            executable_integer,
+            wrong_config_path,
+            wrong_kernel_path,
+            wrong_output_path,
+            reversed_outputs,
+            duplicate_outputs,
+        )
+        with agent_adapter_repository() as root:
+            plan = build_adapter_plan(root)
+            original = self.canonical_manifest_value(plan)
+            for mutation in mutations:
+                with self.subTest(mutation=mutation.__name__):
+                    candidate = json.loads(json.dumps(original))
+                    mutation(candidate)
+                    self.write_canonical_manifest(root, candidate)
+                    self.assert_invalid_manifest(root)
+
+    def test_manifest_rejects_unrepresentable_paths(self):
+        with agent_adapter_repository() as root:
+            plan = build_adapter_plan(root)
+            value = self.canonical_manifest_value(plan)
+            value["files"][0]["path"] = "AGENTS\ud800.md"
+            self.write_canonical_manifest(root, value)
+            self.assert_invalid_manifest(root)
+
+    def test_exact_parity_is_empty_and_check_does_not_mutate(self):
+        with agent_adapter_repository() as root:
+            plan = self.initialize_parity(root)
+            before = tree_snapshot(root)
+            findings = agent.check_agent_adapters(root, plan)
+            after = tree_snapshot(root)
+
+        self.assertEqual(findings, ())
+        self.assertEqual(after, before)
+
+    def test_missing_manifest_is_invalid_without_hiding_output_state(self):
+        with agent_adapter_repository() as root:
+            plan = build_adapter_plan(root)
+            findings = agent.check_agent_adapters(root, plan)
+
+        self.assertEqual(
+            {(finding.code, finding.path) for finding in findings},
+            {
+                ("invalid_manifest", agent.MANIFEST_PATH),
+                ("missing_output", PurePosixPath("AGENTS.md")),
+                ("missing_output", PurePosixPath("CLAUDE.md")),
+            },
+        )
+
+    def test_stale_canonical_digest_and_prior_owned_outputs_are_classified(self):
+        with agent_adapter_repository() as root:
+            prior = self.initialize_parity(root)
+            (root / agent.KERNEL_PATH).write_text(
+                "## Purpose and Scope\n\nChanged canonical policy.\n",
+                encoding="utf-8",
+            )
+            desired = build_adapter_plan(root)
+            findings = agent.check_agent_adapters(root, desired)
+
+        self.assertNotEqual(prior.kernel_sha256, desired.kernel_sha256)
+        self.assertEqual(
+            {(finding.code, finding.path) for finding in findings},
+            {
+                ("invalid_source", agent.KERNEL_PATH),
+                ("stale_output", PurePosixPath("AGENTS.md")),
+                ("stale_output", PurePosixPath("CLAUDE.md")),
+            },
+        )
+
+    def test_missing_divergent_and_executable_drift_outputs_are_classified(self):
+        with agent_adapter_repository() as root:
+            plan = self.initialize_parity(root)
+            (root / "AGENTS.md").unlink()
+            (root / "CLAUDE.md").write_text("unmanaged divergence\n", encoding="utf-8")
+            findings = agent.check_agent_adapters(root, plan)
+        self.assertEqual(
+            {(finding.code, finding.path) for finding in findings},
+            {
+                ("missing_output", PurePosixPath("AGENTS.md")),
+                ("conflicting_output", PurePosixPath("CLAUDE.md")),
+            },
+        )
+
+        with agent_adapter_repository() as root:
+            plan = self.initialize_parity(root)
+            target = root / "AGENTS.md"
+            target.chmod(target.stat().st_mode | 0o100)
+            findings = agent.check_agent_adapters(root, plan)
+        self.assertEqual(
+            {(finding.code, finding.path) for finding in findings},
+            {("conflicting_output", PurePosixPath("AGENTS.md"))},
+        )
+
+    @unittest.skipUnless(hasattr(os, "symlink"), "symlinks are unavailable")
+    def test_symlinked_manifest_and_symlinked_or_special_targets_fail_closed(self):
+        with agent_adapter_repository() as root:
+            plan = self.initialize_parity(root)
+            manifest = root / agent.MANIFEST_PATH
+            alternate = manifest.with_name("alternate.json")
+            manifest.rename(alternate)
+            manifest.symlink_to(alternate.name)
+            self.assertEqual(self.finding_codes(root, plan), {"invalid_manifest"})
+
+        with agent_adapter_repository() as root:
+            plan = self.initialize_parity(root)
+            target = root / "AGENTS.md"
+            alternate = root / "alternate.md"
+            target.rename(alternate)
+            target.symlink_to(alternate.name)
+            self.assertEqual(self.finding_codes(root, plan), {"unsafe_path"})
+
+        if hasattr(os, "mkfifo"):
+            with agent_adapter_repository() as root:
+                plan = self.initialize_parity(root)
+                target = root / "AGENTS.md"
+                target.unlink()
+                os.mkfifo(target)
+                self.assertEqual(self.finding_codes(root, plan), {"unsafe_path"})
+
+    def test_malformed_manifest_does_not_hide_conflicting_output(self):
+        with agent_adapter_repository() as root:
+            plan = self.initialize_parity(root)
+            (root / agent.MANIFEST_PATH).write_bytes(b"{\n")
+            (root / "AGENTS.md").write_text("unmanaged\n", encoding="utf-8")
+            findings = agent.check_agent_adapters(root, plan)
+
+        self.assertEqual(
+            {(finding.code, finding.path) for finding in findings},
+            {
+                ("invalid_manifest", agent.MANIFEST_PATH),
+                ("conflicting_output", PurePosixPath("AGENTS.md")),
+            },
+        )
+
+    @unittest.skipUnless(
+        hasattr(os, "symlink")
+        and hasattr(os, "mkfifo")
+        and hasattr(os, "O_NOFOLLOW")
+        and os.open in os.supports_dir_fd,
+        "descriptor-relative no-follow traversal is unavailable",
+    )
+    def test_manifest_and_target_replacement_at_read_boundary_fail_closed(self):
+        with agent_adapter_repository() as root:
+            plan = self.initialize_parity(root)
+            manifest = root / agent.MANIFEST_PATH
+            alternate = manifest.with_name("alternate.json")
+            alternate.write_bytes(manifest.read_bytes())
+            real_open = os.open
+            swapped = False
+
+            def adversarial_manifest_open(path, flags, mode=0o777, *, dir_fd=None):
+                nonlocal swapped
+                if path == agent.MANIFEST_PATH.name and dir_fd is not None and not swapped:
+                    manifest.unlink()
+                    manifest.symlink_to(alternate.name)
+                    swapped = True
+                return real_open(path, flags, mode, dir_fd=dir_fd)
+
+            with mock.patch.object(Path, "read_bytes", side_effect=AssertionError), mock.patch.object(
+                os, "open", adversarial_manifest_open
+            ):
+                self.assertEqual(self.finding_codes(root, plan), {"invalid_manifest"})
+            self.assertTrue(swapped)
+
+        with agent_adapter_repository() as root:
+            plan = self.initialize_parity(root)
+            target = root / "AGENTS.md"
+            real_open = os.open
+            swapped = False
+
+            def adversarial_target_open(path, flags, mode=0o777, *, dir_fd=None):
+                nonlocal swapped
+                if path == "AGENTS.md" and dir_fd is not None and not swapped:
+                    target.unlink()
+                    os.mkfifo(target)
+                    swapped = True
+                return real_open(path, flags, mode, dir_fd=dir_fd)
+
+            with mock.patch.object(Path, "read_bytes", side_effect=AssertionError), mock.patch.object(
+                os, "open", adversarial_target_open
+            ):
+                self.assertEqual(self.finding_codes(root, plan), {"unsafe_path"})
+            self.assertTrue(swapped)
+
+    def test_unrepresentable_root_is_a_structured_technical_block(self):
+        with agent_adapter_repository() as root:
+            plan = build_adapter_plan(root)
+        findings = agent.check_agent_adapters(Path("repository\ud800"), plan)
+        self.assertEqual({finding.code for finding in findings}, {"technical_block"})
+
+    def test_findings_are_sorted_by_path_then_code(self):
+        with agent_adapter_repository() as root:
+            plan = build_adapter_plan(root)
+            findings = agent.check_agent_adapters(root, plan)
+
+        keys = [
+            (finding.path.as_posix() if finding.path is not None else "", finding.code)
+            for finding in findings
+        ]
+        self.assertEqual(keys, sorted(keys))
+
+    def test_limit_finding_aggregates_manifest_and_fixed_target_findings(self):
+        with agent_adapter_repository() as root:
+            plan = self.initialize_parity(root)
+            payload = (b"x" * 16384) + b"\n"
+            oversized = dataclasses.replace(
+                plan.outputs[0],
+                payload=payload,
+                sha256=hashlib.sha256(payload).hexdigest(),
+                byte_count=len(payload),
+                line_count=payload.count(b"\n"),
+            )
+            forged = dataclasses.replace(plan, outputs=(oversized, plan.outputs[1]))
+            (root / agent.MANIFEST_PATH).write_bytes(b"{\n")
+            (root / "AGENTS.md").unlink()
+            (root / "AGENTS.md").mkdir()
+            (root / "CLAUDE.md").write_text("unmanaged\n", encoding="utf-8")
+            findings = agent.check_agent_adapters(root, forged)
+
+            with self.assertRaises(AdapterFailure) as raised:
+                agent.serialize_adapter_manifest(forged)
+
+        self.assertEqual(
+            {(finding.code, finding.path) for finding in findings},
+            {
+                ("limit_exceeded", PurePosixPath("AGENTS.md")),
+                ("invalid_manifest", agent.MANIFEST_PATH),
+                ("unsafe_path", PurePosixPath("AGENTS.md")),
+                ("conflicting_output", PurePosixPath("CLAUDE.md")),
+            },
+        )
+        self.assertEqual(
+            {(finding.code, finding.path) for finding in raised.exception.findings},
+            {("limit_exceeded", PurePosixPath("AGENTS.md"))},
+        )
+
+    def test_manifest_capability_and_resource_failures_are_technical_blocks(self):
+        with agent_adapter_repository() as root:
+            self.initialize_parity(root)
+            with mock.patch.object(agent, "_OPEN_SUPPORTS_DIR_FD", False):
+                with self.assertRaises(AdapterFailure) as raised:
+                    agent.load_adapter_manifest(root)
+            self.assertEqual(
+                {finding.code for finding in raised.exception.findings},
+                {"technical_block"},
+            )
+
+            for error_number in (errno.EACCES, errno.EMFILE, errno.EIO):
+                with self.subTest(error_number=error_number):
+                    real_open = os.open
+
+                    def failing_open(path, flags, mode=0o777, *, dir_fd=None):
+                        if path == agent.MANIFEST_PATH.name and dir_fd is not None:
+                            raise OSError(error_number, "mocked operational failure")
+                        return real_open(path, flags, mode, dir_fd=dir_fd)
+
+                    with mock.patch.object(os, "open", failing_open):
+                        with self.assertRaises(AdapterFailure) as raised:
+                            agent.load_adapter_manifest(root)
+                    self.assertEqual(
+                        {finding.code for finding in raised.exception.findings},
+                        {"technical_block"},
+                    )
+
+    def test_unrepresentable_plan_target_blocks_all_filesystem_inspection(self):
+        with agent_adapter_repository() as root:
+            plan = build_adapter_plan(root)
+            unsafe = dataclasses.replace(
+                plan.outputs[0],
+                target=PurePosixPath("AGENTS\ud800.md"),
+            )
+            forged = dataclasses.replace(plan, outputs=(unsafe, plan.outputs[1]))
+            with mock.patch.object(os, "open", side_effect=AssertionError):
+                findings = agent.check_agent_adapters(root, forged)
+
+        self.assertEqual({finding.code for finding in findings}, {"invalid_source"})
+
+    def test_target_io_failure_is_a_technical_block(self):
+        with agent_adapter_repository() as root:
+            plan = self.initialize_parity(root)
+            real_open = os.open
+
+            def failing_open(path, flags, mode=0o777, *, dir_fd=None):
+                if path == "AGENTS.md" and dir_fd is not None:
+                    raise OSError(errno.EIO, "mocked I/O failure")
+                return real_open(path, flags, mode, dir_fd=dir_fd)
+
+            with mock.patch.object(os, "open", failing_open):
+                findings = agent.check_agent_adapters(root, plan)
+
+        self.assertEqual(
+            {(finding.code, finding.path) for finding in findings},
+            {("technical_block", PurePosixPath("AGENTS.md"))},
+        )
 
 
 if __name__ == "__main__":
