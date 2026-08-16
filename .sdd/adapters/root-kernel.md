@@ -1,0 +1,129 @@
+## Purpose and Scope
+
+This repository uses spec-driven delivery with deterministic policy controls.
+Automate engineering decisions that evidence and policy authorize; escalate only
+irreducible business, legal, financial, regulatory, security, or destructive
+production decisions.
+
+The operating guide is `.sdd/README.md`. The control plane is
+`.sdd/controls/project.yaml`, `.sdd/controls/routing.yaml`,
+`.sdd/controls/policy.yaml`, and `.sdd/controls/lifecycle.yaml`. Load every module
+selected by routing; routed guidance is mandatory, not optional context.
+
+## Authority and Canonical Sources
+
+Apply authority from highest to lowest: external law and contract;
+`.specify/memory/constitution.md`; approved active specifications, plans, tasks,
+and decisions; validated project policy and loaded modules; this root kernel;
+actual implementation, telemetry, data, and consumer behavior as drift evidence;
+then conventional practice only where higher sources are silent. A lower source
+cannot weaken a higher one.
+
+The most restrictive applicable outcome wins:
+`prohibited > human_required > autonomous_with_enhanced_gates > autonomous`.
+Autonomous work proceeds with evidence; enhanced-gate work proceeds only after
+the configured gates; human-required work pauses the affected action for a
+bounded decision; prohibited work stops and cannot be enabled by an ordinary
+response or exception.
+
+Evaluate external obligations, the constitution, regulated overlays, project
+policy, the base profile, and workflow defaults in that order. Preserve explicit
+unknowns. Never invent identity, commands, environments, permissions, compliance,
+or production readiness.
+
+## Startup and Change Discovery
+
+At session start, read this kernel, `.sdd/README.md`,
+`.specify/memory/constitution.md`, and all four `.sdd/controls/*` files named
+above. Determine the workflow family from explicit intent before selecting a
+feature. Resolve feature work from intent and approved active artifacts; assign
+a stable change ID for non-feature work. `implementation_status.md` is an
+operational ledger and never selects the active change by itself.
+
+Extract typed, observable facts with repository evidence. The agent reports
+facts; deterministic code evaluates classification, risk, authority, routing,
+exceptions, resources, and transitions. Validate the controls and context,
+evaluate them, load every returned module, bind the decision to current policy,
+context, and change hashes, and request the next lifecycle transition.
+
+Use these supported repository-root entrypoints:
+`.venv/bin/python scripts/policy-engine.py validate --root . [--context PATH]`
+`.venv/bin/python scripts/policy-engine.py evaluate --root . --context PATH [--output PATH]`
+
+## Routing and Deterministic Decisions
+
+Routing is additive and de-duplicated. Always-on rules, workflow, base profile,
+overlays, and every fact- or action-routed module all apply. Material unknown,
+stale, contradictory, or inadequately corroborated evidence fails closed.
+
+Classify ambiguity as inferable, reversible default, or material business.
+Resolve and record only what evidence or configured defaults support; material
+business choices require human authority. When dependencies are unavailable or
+inputs cannot be validated, enter `BLOCKED_TECHNICAL`; do not substitute model
+judgment for deterministic evaluation.
+
+## Implementation, Validation, and Review
+
+Preserve intended behavior from specifications while using implementation,
+tests, telemetry, data, and consumers as actual-state evidence. Work test-first
+for behavior changes: observe a relevant failure, implement the smallest
+solution, rerun affected tests, and record results.
+
+Keep changes small, traceable, reversible, and limited to the active change.
+Validate untrusted input and model output at boundaries. Protect credentials,
+personal data, authorization boundaries, and audit evidence. Run configured
+local validation and policy-activated, context-separated review. Repair
+actionable findings and rerun affected validation without exceeding configured
+repair, CI-rerun, retry, elapsed-time, or cost limits.
+
+Bind decisions to the policy, context, and change hashes. Policy changes
+invalidate all decisions; context changes invalidate classification onward;
+code or configuration changes invalidate validation and review onward. After the
+authorized bootstrap, every instruction-system change requires human authority;
+a proposed policy cannot approve its own revision.
+
+## Lifecycle and Stop Conditions
+
+The full code path is `UNCLASSIFIED -> CLASSIFIED -> SPECIFIED -> CLARIFIED ->
+PLANNED -> TASKED -> ANALYZED -> IMPLEMENTING -> VALIDATING -> REVIEWING ->
+CONVERGING -> COMPLETE`. Release may continue from `CONVERGING` through
+`RELEASE_READY` to `COMPLETE`; deployment continues through `RELEASE_READY ->
+DEPLOYING -> VERIFYING -> COMPLETE`. Maintenance uses `UNCLASSIFIED ->
+CLASSIFIED -> VALIDATING -> REVIEWING -> COMPLETE`.
+
+Exceptional states are `BLOCKED_REQUIREMENT`, `BLOCKED_POLICY`,
+`BLOCKED_TECHNICAL`, `HUMAN_DECISION_REQUIRED`, `ROLLBACK_REQUIRED`, and
+`INCIDENT`. Recover respectively by gathering evidence or clarifying, changing
+the request or obtaining authorized policy change, bounded retry or validated
+alternative, ingesting a valid bounded response and reevaluating, executing the
+verified rollback, or following the incident-hotfix workflow. Never skip a
+state or resume blindly after an exceptional state.
+
+## Git, CI, and Documentation Parity
+
+Use only configured repository commands. Commit, push, pull-request, merge,
+release, and deployment actions require their policy outcome and every applicable
+lifecycle gate. Publication is always policy-gated and does not itself prove a
+release or deployment.
+
+Record the exact reviewed change and required check results. Required CI on the exact merge candidate is authoritative for merge.
+Local checks remain required evidence and cannot override higher authority or a
+prohibited outcome. Keep canonical instructions, generated adapters,
+documentation, decisions, and `implementation_status.md` mutually accurate.
+Record outcomes and evidence without copying volatile state into durable policy.
+
+## Completion and Escalation
+
+Complete only when the selected lifecycle reaches `COMPLETE`: acceptance evidence,
+classification, risk, authority, routing, hashes, local validation, exact-candidate
+CI, reviews, documentation, and rollback or terminal-path evidence are current;
+findings are repaired or covered by a valid exception; and no material ambiguity,
+prohibition, expired exception, or exhausted resource condition is concealed.
+
+Escalate only the precise decision that deterministic evidence and configured
+authority cannot resolve. Provide a bounded packet containing the decision ID and
+exact decision, policy trigger, evidence collected, bounded options and
+consequences, recommended option, required response fields, and current policy,
+context, and change hashes. A response must match an offered option, identify the
+actor and authority basis, remain fresh for all hashes, incorporate its conditions,
+and be reevaluated. A prohibited action has no ordinary response path.
