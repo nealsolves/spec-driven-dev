@@ -23,9 +23,9 @@
 | Deliverable | Status | Evidence or next gate |
 |---|---|---|
 | Project initialization | not started | The reusable template intentionally remains unconfigured; resolve identity, commands, environments, owners, data posture, and authority before instantiation. |
-| Specification and plan | deferred | Planning artifacts are intentionally local and ignored; tracked operating requirements live in `CLAUDE.md`, `.sdd/`, and the constitution. |
-| Implementation | in review | Compact kernel, four control files, four schemas, modular guidance, four-command engine, and validators are present on the active branch. |
-| Validation | in review | Repository validator passed; 160 unit tests passed; root kernel is 230 lines; `git diff --check` passed. |
+| Specification and plan | deferred | Planning artifacts are intentionally local and ignored; tracked operating requirements live in `.sdd/adapters/root-kernel.md`, the canonical `.sdd/` tree, and the constitution. |
+| Implementation | in review | The authored root kernel, generated Claude and Codex adapters, four policy control files, four schemas, modular guidance, four-command engine, and validators are present. |
+| Validation | in review | Repository validation evidence is recorded below; generated root-adapter budgets are owned by `.sdd/controls/adapters.yaml`. |
 | Review and convergence | in review | Task-level reviews are complete; final broad review is the current gate. |
 | Pull request and merge | not started | No pull request or merge is recorded. Publication requires an explicit authorized action after final review. |
 | Release and deployment | deferred | No release or deployment was created. External release/deployment execution is Phase 2. |
@@ -41,7 +41,7 @@ Verified on 2026-07-20 in the active worktree:
 | `.venv/bin/python -m py_compile scripts/policy-engine.py` | PASS (exit 0) |
 | `.venv/bin/python -m unittest discover -s tests -p 'test_*.py'` | PASS: 160 tests, 0 failures, 0 errors |
 | `bash scripts/validate-instructions.sh` | PASS: repository-only validation; no live context supplied |
-| `wc -l CLAUDE.md` | PASS: 230 lines (maximum 350) |
+| `CLAUDE.md` and `AGENTS.md` adapter budgets | PASS: each generated adapter has a 280-line and 16384-byte hard limit; the initial outputs also meet the 180-line target. |
 | `git diff --check` | PASS: no whitespace errors |
 | Focused correction suite | PASS: 16 targeted regression tests, including configured-project, generic-authority, routing, precedence, resource, version, status, and malformed-input cases |
 | Final configured-authority regression suite | PASS: 7 targeted tests covering commands, Spec Kit versions, release command applicability, and production mechanisms |

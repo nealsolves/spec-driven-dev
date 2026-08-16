@@ -9,7 +9,7 @@ from pathlib import Path
 
 import yaml
 
-from tests.helpers import ROOT
+from tests.helpers import ROOT, copy_validator_repository
 
 
 VALIDATOR = Path("scripts/validate-instructions.sh")
@@ -21,26 +21,7 @@ def repository_copy():
     with tempfile.TemporaryDirectory() as directory:
         root = Path(directory) / "repository"
         root.mkdir()
-        for name in (
-            ".sdd",
-            ".claude",
-            ".specify",
-            "scripts",
-            "src",
-            "CLAUDE.md",
-            "implementation_status.md",
-            "requirements-policy.txt",
-        ):
-            source = ROOT / name
-            destination = root / name
-            if source.is_dir():
-                shutil.copytree(
-                    source,
-                    destination,
-                    ignore=shutil.ignore_patterns("__pycache__", "*.pyc"),
-                )
-            else:
-                shutil.copy2(source, destination)
+        copy_validator_repository(root)
         yield root
 
 
@@ -126,24 +107,71 @@ class ValidatorCliTest(unittest.TestCase):
         self.assertEqual(result.returncode, 3, result.stdout + result.stderr)
         self.assertIn("technical", result.stdout.lower() + result.stderr.lower())
 
-    def test_validator_aggregates_missing_rule_line_limit_and_broken_link(self):
+    def test_primary_validator_rejects_generated_claude_drift(self):
         with repository_copy() as root:
-            (root / ".claude/rules/security.md").unlink()
             claude_path = root / "CLAUDE.md"
             claude_path.write_text(
-                claude_path.read_text(encoding="utf-8")
-                + "\n[Broken validator fixture](missing-target.md)\n"
-                + ("padding\n" * 351),
+                claude_path.read_text(encoding="utf-8") + "\nManual root edit.\n",
                 encoding="utf-8",
             )
-
             result = run_script(root)
 
         self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
-        self.assertGreaterEqual(result.stdout.count("ERROR:"), 3, result.stdout)
-        self.assertIn(".claude/rules/security.md", result.stdout)
-        self.assertIn("350", result.stdout)
-        self.assertIn("missing-target.md", result.stdout)
+        self.assertIn("conflicting_output", result.stdout)
+        self.assertIn("CLAUDE.md", result.stdout)
+
+    def test_primary_validator_rejects_generated_agents_drift(self):
+        with repository_copy() as root:
+            agents_path = root / "AGENTS.md"
+            agents_path.write_text(
+                agents_path.read_text(encoding="utf-8") + "\nManual root edit.\n",
+                encoding="utf-8",
+            )
+            result = run_script(root)
+
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("conflicting_output", result.stdout)
+        self.assertIn("AGENTS.md", result.stdout)
+
+    def test_adapter_technical_block_propagates_exit_three(self):
+        with repository_copy() as root:
+            (root / "scripts/render-agent-adapters.py").write_text(
+                "#!/usr/bin/env python3\n"
+                "print('ERROR: technical_block: -: cannot inspect adapters')\n"
+                "raise SystemExit(3)\n",
+                encoding="utf-8",
+            )
+            result = run_script(root)
+
+        self.assertEqual(result.returncode, 3, result.stdout + result.stderr)
+        self.assertIn("technical_block", result.stdout)
+
+    def test_adapter_success_output_is_suppressed_and_check_runs_once(self):
+        with repository_copy() as root:
+            renderer = root / "scripts/render-agent-adapters.py"
+            renderer.write_text(
+                "#!/usr/bin/env python3\n"
+                "import pathlib\n"
+                "import sys\n"
+                "root = pathlib.Path(sys.argv[sys.argv.index('--root') + 1])\n"
+                "if sys.argv[1:] != ['--root', str(root), '--check']:\n"
+                "    raise SystemExit(9)\n"
+                "calls = root / 'adapter-check-calls'\n"
+                "calls.write_text(calls.read_text() + 'check\\n' if calls.exists() else 'check\\n')\n"
+                "print('OK: adapter fixture success')\n",
+                encoding="utf-8",
+            )
+            result = run_script(root)
+
+            self.assertTrue((root / "adapter-check-calls").is_file())
+            self.assertEqual(
+                (root / "adapter-check-calls").read_text(encoding="utf-8"),
+                "check\n",
+            )
+
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertNotIn("adapter fixture success", result.stdout)
+        self.assertEqual(result.stdout.count("OK:"), 1, result.stdout)
 
     def test_unexpected_instruction_artifact_fails_exact_inventory(self):
         with repository_copy() as root:
@@ -187,36 +215,20 @@ class ValidatorCliTest(unittest.TestCase):
         self.assertIn("unconfigured", result.stdout.lower())
         self.assertIn("remote_actions", result.stdout)
 
-    def test_missing_lifecycle_term_fails(self):
+    def test_broken_agents_local_markdown_link_fails(self):
         with repository_copy() as root:
-            claude_path = root / "CLAUDE.md"
-            claude_path.write_text(
-                claude_path.read_text(encoding="utf-8").replace(
-                    "ROLLBACK_REQUIRED", "ROLLBACK_NEEDED"
-                ),
+            agents_path = root / "AGENTS.md"
+            agents_path.write_text(
+                agents_path.read_text(encoding="utf-8")
+                + "\n[Broken validator fixture](missing-target.md)\n",
                 encoding="utf-8",
             )
-
             result = run_script(root)
 
         self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
-        self.assertIn("ROLLBACK_REQUIRED", result.stdout)
-
-    def test_required_ci_sentence_is_exact(self):
-        with repository_copy() as root:
-            claude_path = root / "CLAUDE.md"
-            claude_path.write_text(
-                claude_path.read_text(encoding="utf-8").replace(
-                    "Required CI on the exact merge candidate is authoritative for merge.",
-                    "Required CI is useful for merge.",
-                ),
-                encoding="utf-8",
-            )
-
-            result = run_script(root)
-
-        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
-        self.assertIn("exact merge candidate", result.stdout)
+        self.assertIn("broken local Markdown link", result.stdout)
+        self.assertIn("AGENTS.md", result.stdout)
+        self.assertIn("missing-target.md", result.stdout)
 
     def test_script_executable_bits_are_validated(self):
         with repository_copy() as root:
@@ -238,6 +250,16 @@ class ValidatorCliTest(unittest.TestCase):
 
         self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
         self.assertIn("not executable", result.stdout)
+        self.assertIn("scripts/render-agent-adapters.py", result.stdout)
+
+    def test_missing_root_adapter_renderer_is_validated(self):
+        with repository_copy() as root:
+            (root / "scripts/render-agent-adapters.py").unlink()
+
+            result = run_script(root, through_bash=True)
+
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("missing artifact", result.stdout)
         self.assertIn("scripts/render-agent-adapters.py", result.stdout)
 
     def test_feature_context_wrapper_forwards_context_and_status(self):
@@ -349,9 +371,9 @@ class ValidatorCliTest(unittest.TestCase):
 
     def test_missing_reference_definition_fails(self):
         with repository_copy() as root:
-            claude_path = root / "CLAUDE.md"
-            claude_path.write_text(
-                claude_path.read_text(encoding="utf-8")
+            document = root / "implementation_status.md"
+            document.write_text(
+                document.read_text(encoding="utf-8")
                 + "\n[Broken reference][missing-ref]\n",
                 encoding="utf-8",
             )
@@ -364,9 +386,9 @@ class ValidatorCliTest(unittest.TestCase):
 
     def test_broken_reference_definition_target_fails(self):
         with repository_copy() as root:
-            claude_path = root / "CLAUDE.md"
-            claude_path.write_text(
-                claude_path.read_text(encoding="utf-8")
+            document = root / "implementation_status.md"
+            document.write_text(
+                document.read_text(encoding="utf-8")
                 + "\n[Broken reference][missing-ref]\n"
                 + "[missing-ref]: missing-reference.md\n",
                 encoding="utf-8",
@@ -382,9 +404,9 @@ class ValidatorCliTest(unittest.TestCase):
         with repository_copy() as root:
             (root / "reference(target).md").write_text("# Target\n", encoding="utf-8")
             (root / "reference target.md").write_text("# Target\n", encoding="utf-8")
-            claude_path = root / "CLAUDE.md"
-            claude_path.write_text(
-                claude_path.read_text(encoding="utf-8")
+            document = root / "implementation_status.md"
+            document.write_text(
+                document.read_text(encoding="utf-8")
                 + "\n[Inline parentheses](reference(target).md)\n"
                 + "[Angle destination](<reference target.md>)\n"
                 + "[Reference parentheses][paren-ref]\n"
