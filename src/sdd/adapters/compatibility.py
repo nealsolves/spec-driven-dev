@@ -17,6 +17,9 @@ RENDERER = "sdd.adapters.compatibility:v1"
 MANIFEST_PATH = PurePosixPath(".sdd/generated-files.json")
 CONTROL_NAMES = ("project.yaml", "routing.yaml", "policy.yaml", "lifecycle.yaml")
 MODULE_NAMESPACES = ("rules", "workflows", "profiles", "templates")
+CANONICAL_ONLY_CONTROL_NAMES = ("adapters.yaml",)
+CANONICAL_ONLY_ROOT_FILES = ("agent-adapters.generated.json",)
+CANONICAL_ONLY_DIRECTORIES = {"adapters": ("root-kernel.md",)}
 
 
 @dataclass(frozen=True)
@@ -882,7 +885,7 @@ def _discover_projection_entries(repository: Path) -> tuple[ProjectionEntry, ...
         "generated-files.json",
         "migrations",
         "state",
-    }
+    } | set(CANONICAL_ONLY_ROOT_FILES) | set(CANONICAL_ONLY_DIRECTORIES)
     for name, child in root_children.items():
         if name not in allowed_root_names:
             invalid(child)
@@ -903,7 +906,7 @@ def _discover_projection_entries(repository: Path) -> tuple[ProjectionEntry, ...
     elif inspect(controls, directory=True) is not None:
         control_children = {child.name: child for child in children(controls)}
         for name, child in control_children.items():
-            if name not in CONTROL_NAMES:
+            if name not in CONTROL_NAMES + CANONICAL_ONLY_CONTROL_NAMES:
                 invalid(child)
         for name in CONTROL_NAMES:
             source = control_children.get(name)
@@ -915,6 +918,10 @@ def _discover_projection_entries(repository: Path) -> tuple[ProjectionEntry, ...
                 )
             else:
                 add_entry(source, PurePosixPath(".claude") / name)
+        for name in CANONICAL_ONLY_CONTROL_NAMES:
+            source = control_children.get(name)
+            if source is not None:
+                inspect(source, directory=False)
 
     schemas = root_children.get("schemas")
     if schemas is None:
@@ -958,6 +965,21 @@ def _discover_projection_entries(repository: Path) -> tuple[ProjectionEntry, ...
         ignored = root_children.get(ignored_name)
         if ignored is not None:
             inspect(ignored, directory=ignored_name != "generated-files.json")
+
+    for name in CANONICAL_ONLY_ROOT_FILES:
+        source = root_children.get(name)
+        if source is not None:
+            inspect(source, directory=False)
+
+    for directory_name, allowed_names in CANONICAL_ONLY_DIRECTORIES.items():
+        directory = root_children.get(directory_name)
+        if directory is None or inspect(directory, directory=True) is None:
+            continue
+        for child in children(directory):
+            if child.name not in allowed_names:
+                invalid(child)
+                continue
+            inspect(child, directory=False)
 
     _append_collision_findings(entries, findings)
     if findings:

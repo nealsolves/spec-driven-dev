@@ -34,6 +34,36 @@ class ProjectionPlanningTest(unittest.TestCase):
             all(entry.source_sha256 == entry.output_sha256 for entry in plan.entries)
         )
 
+    def test_canonical_only_agent_adapter_artifacts_are_not_projected(self):
+        with projection_repository() as root:
+            (root / ".sdd/adapters").mkdir()
+            (root / ".sdd/adapters/root-kernel.md").write_text(
+                "## Kernel\n", encoding="utf-8"
+            )
+            (root / ".sdd/controls/adapters.yaml").write_text(
+                "format: 1\n", encoding="utf-8"
+            )
+            (root / ".sdd/agent-adapters.generated.json").write_text(
+                "{}\n", encoding="utf-8"
+            )
+
+            plan = build_projection(root)
+
+        self.assertEqual(len(plan.entries), 45)
+        self.assertNotIn(
+            ".claude/adapters.yaml",
+            {entry.target.as_posix() for entry in plan.entries},
+        )
+
+    def test_unexpected_file_in_canonical_adapter_directory_fails_closed(self):
+        with projection_repository() as root:
+            (root / ".sdd/adapters").mkdir()
+            (root / ".sdd/adapters/unexpected.md").write_text("x\n")
+            with self.assertRaises(ProjectionFailure) as raised:
+                build_projection(root)
+
+        self.assertIn("invalid_source", {item.code for item in raised.exception.findings})
+
     def test_planning_is_byte_deterministic(self):
         with projection_repository() as root:
             first = build_projection(root)

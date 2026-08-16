@@ -1,0 +1,29 @@
+{
+  "adapter_format": 1,
+  "config": {
+    "path": ".sdd/controls/adapters.yaml",
+    "sha256": "918713d53483bf2e4152ad0bf26ca1e062fad23255ee32bbc58699b322501c43"
+  },
+  "files": [
+    {
+      "bytes": 7330,
+      "executable": false,
+      "lines": 132,
+      "path": "AGENTS.md",
+      "sha256": "de3f5eb9dcf2f58aef6a6edc1849ef758457a57204a8cc0acefbe2b42ea91898"
+    },
+    {
+      "bytes": 7331,
+      "executable": false,
+      "lines": 132,
+      "path": "CLAUDE.md",
+      "sha256": "fbc6683a1b6d9c471185351ca93cfdb4c3b61cf6f47cf033b4c6b9a35932a5f2"
+    }
+  ],
+  "format": 1,
+  "kernel": {
+    "path": ".sdd/adapters/root-kernel.md",
+    "sha256": "e9ffe041d783defb851c6d6d9734b5559ab5e8269041c98a450bc4ec840dc71b"
+  },
+  "renderer": "sdd.adapters.agent:v1"
+}

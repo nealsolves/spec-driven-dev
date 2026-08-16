@@ -19,10 +19,27 @@ compatibility tree:
 .venv/bin/python scripts/render-compatibility.py --root . --check
 ```
 
+The authored normative root source is
+[`adapters/root-kernel.md`](../.sdd/adapters/root-kernel.md).
+[`controls/adapters.yaml`](../.sdd/controls/adapters.yaml) owns only renderer
+paths and line/byte budgets. `CLAUDE.md` and `AGENTS.md` are generated managed
+entry adapters; direct edits are rejected. Check or regenerate them with:
+
+```bash
+scripts/render-agent-adapters.py --root . --check
+scripts/render-agent-adapters.py --root . --write
+```
+
+P0 proves that both adapters contain identical normative bytes. Richer semantic
+policy comparison remains deferred to P6 and P7.
+
 ## Three Layers
 
-1. **Behavioral kernel** — [`../CLAUDE.md`](../CLAUDE.md) defines authority,
-   startup, invariants, lifecycle, routing, escalation, and done.
+1. **Behavioral kernel** —
+   [`adapters/root-kernel.md`](../.sdd/adapters/root-kernel.md) is the authored
+   normative source for authority, startup, invariants, lifecycle, routing,
+   escalation, and done; the root `CLAUDE.md` and `AGENTS.md` files are its
+   generated agent entry adapters.
 2. **Guidance** — [`rules/`](../.sdd/modules/rules/),
    [`workflows/`](../.sdd/modules/workflows/),
    [`profiles/`](../.sdd/modules/profiles/), and

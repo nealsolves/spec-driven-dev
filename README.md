@@ -10,8 +10,8 @@ release, or deploy changes.
 
 ## What this template provides
 
-- A compact [behavioral kernel](CLAUDE.md) that defines startup, authority,
-  lifecycle, escalation, and completion rules.
+- A compact, authored [root kernel](.sdd/adapters/root-kernel.md) that generates
+  the `CLAUDE.md` and `AGENTS.md` entry adapters.
 - Modular rules, workflows, profiles, and evidence templates in the canonical
   [`.sdd/` source tree](.sdd/README.md).
 - Four machine-readable control files for project identity, routing, policy,
@@ -110,6 +110,20 @@ compatibility projection directly, run:
 .venv/bin/python scripts/render-compatibility.py --root . --write
 ```
 
+The authored normative root source is
+`.sdd/adapters/root-kernel.md`. `.sdd/controls/adapters.yaml` owns only the
+renderer paths and line/byte budgets. `CLAUDE.md` and `AGENTS.md` are generated
+managed entry adapters, so direct edits are rejected. Check or regenerate them
+with:
+
+```bash
+scripts/render-agent-adapters.py --root . --check
+scripts/render-agent-adapters.py --root . --write
+```
+
+P0 proves that both adapters carry identical normative bytes. Richer semantic
+policy comparison remains deferred to P6 and P7.
+
 To validate a feature or maintenance context as well:
 
 ```bash
@@ -168,12 +182,14 @@ then escalate only genuinely material or authority-bound decisions.
 
 ## Agent and Spec Kit compatibility
 
-This repository is **Claude-first**: its primary instruction entry point is
-[`CLAUDE.md`](CLAUDE.md). `.sdd/` is the authoritative source for detailed
-guidance and controls. `.claude/` is generated compatibility output; do not edit it directly.
-The P0 legacy policy engine still reads `.claude/`. Another coding agent can use
-the template only when it reads and follows the kernel and canonical sources;
-compatibility is not universal or automatic.
+This repository generates [`CLAUDE.md`](CLAUDE.md) and
+[`AGENTS.md`](AGENTS.md) from one authored normative root kernel. `.sdd/` is the
+authoritative source for guidance, controls, and the shared kernel. In other
+words, `.sdd/` is the authoritative source.
+`.claude/` is generated compatibility output; do not edit it directly. Do not
+edit either generated root adapter directly.
+The P0 legacy policy engine still reads `.claude/`. That execution path remains
+Claude-first.
 
 [GitHub Spec Kit](https://github.com/github/spec-kit) is an optional compatible
 workflow reference for specification-driven development. It is not bundled,
@@ -187,9 +203,12 @@ install Spec Kit or an installed version lacks a referenced command.
 ## Repository map
 
 ```text
-CLAUDE.md                         Behavioral kernel and normative startup contract
+CLAUDE.md                         Generated Claude entry adapter
+AGENTS.md                         Generated Codex entry adapter
 .sdd/                             Authoritative instruction source
 ├── README.md                    Detailed operating guide
+├── adapters/root-kernel.md      Authored normative root kernel
+├── controls/adapters.yaml       Root adapter paths and budgets only
 ├── controls/                    Identity, routing, policy, and lifecycle controls
 ├── schemas/                     Four JSON Schema contracts
 └── modules/                     Rules, workflows, profiles, and templates
@@ -201,6 +220,7 @@ CLAUDE.md                         Behavioral kernel and normative startup contra
                                   Generated compatibility modules
 .specify/memory/constitution.md  Non-negotiable governing principles
 scripts/policy-engine.py         Four-command deterministic policy CLI
+scripts/render-agent-adapters.py Root adapter parity renderer
 scripts/validate-instructions.sh Primary repository validator
 requirements-policy.txt         Bounded policy-runtime dependencies
 requirements-test.txt           Bounded package-verification dependencies
@@ -234,7 +254,7 @@ general policy-version migration.
 
 ## Detailed guidance
 
-- [Behavioral kernel](CLAUDE.md)
+- [Authored root kernel](.sdd/adapters/root-kernel.md)
 - [Modular delivery operating guide](.sdd/README.md)
 - [Project initialization workflow](.sdd/modules/workflows/project-initialization.md)
 - [Delivery constitution](.specify/memory/constitution.md)

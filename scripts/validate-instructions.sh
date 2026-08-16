@@ -96,6 +96,18 @@ if [[ $PROJECTION_STATUS -eq 3 ]]; then
   exit 3
 fi
 
+ADAPTER_STATUS=0
+if [[ $PROJECTION_STATUS -eq 0 ]]; then
+  ADAPTER_OUTPUT="$("$PYTHON" -B "$ROOT/scripts/render-agent-adapters.py" --root "$ROOT" --check 2>&1)"
+  ADAPTER_STATUS=$?
+  if [[ $ADAPTER_STATUS -ne 0 ]]; then
+    printf '%s\n' "$ADAPTER_OUTPUT"
+  fi
+  if [[ $ADAPTER_STATUS -eq 3 ]]; then
+    exit 3
+  fi
+fi
+
 ENGINE_ARGUMENTS=("$ROOT/scripts/policy-engine.py" validate --root "$ROOT")
 if [[ -n "$CONTEXT" ]]; then
   ENGINE_ARGUMENTS+=(--context "$CONTEXT")
@@ -262,6 +274,7 @@ def inventory(directory, expected_names):
 
 required_root_files = (
     "CLAUDE.md",
+    "AGENTS.md",
     "implementation_status.md",
     "requirements-policy.txt",
     ".specify/memory/constitution.md",
@@ -348,6 +361,7 @@ inventory(
     root / "scripts",
     {
         "policy-engine.py",
+        "render-agent-adapters.py",
         "render-compatibility.py",
         "validate-instructions.sh",
         "validate-feature-context.sh",
@@ -356,6 +370,7 @@ inventory(
 
 for relative in (
     "scripts/policy-engine.py",
+    "scripts/render-agent-adapters.py",
     "scripts/render-compatibility.py",
     "scripts/validate-instructions.sh",
     "scripts/validate-feature-context.sh",
@@ -363,49 +378,6 @@ for relative in (
     path = root / relative
     if safe_is_file(path) and not os.access(path, os.X_OK):
         error(f"script is not executable: {relative}")
-
-claude_path = root / "CLAUDE.md"
-claude_bytes = None
-if safe_is_file(claude_path):
-    claude_bytes = read_bytes(claude_path)
-if safe_is_file(claude_path) and claude_bytes is not None:
-    line_count = claude_bytes.count(b"\n")
-    if line_count > 350:
-        error(f"CLAUDE.md has {line_count} lines; maximum is 350 (wc -l semantics)")
-    try:
-        claude_text = claude_bytes.decode("utf-8")
-    except UnicodeDecodeError as exc:
-        error(f"CLAUDE.md is not valid UTF-8: {exc}")
-        claude_text = ""
-    required_states = (
-        "UNCLASSIFIED",
-        "CLASSIFIED",
-        "SPECIFIED",
-        "CLARIFIED",
-        "PLANNED",
-        "TASKED",
-        "ANALYZED",
-        "IMPLEMENTING",
-        "VALIDATING",
-        "REVIEWING",
-        "CONVERGING",
-        "RELEASE_READY",
-        "DEPLOYING",
-        "VERIFYING",
-        "COMPLETE",
-        "BLOCKED_REQUIREMENT",
-        "BLOCKED_POLICY",
-        "BLOCKED_TECHNICAL",
-        "HUMAN_DECISION_REQUIRED",
-        "ROLLBACK_REQUIRED",
-        "INCIDENT",
-    )
-    for state in required_states:
-        if not re.search(rf"(?<![A-Z0-9_]){re.escape(state)}(?![A-Z0-9_])", claude_text):
-            error(f"CLAUDE.md is missing required lifecycle term: {state}")
-    ci_sentence = "Required CI on the exact merge candidate is authoritative for merge."
-    if ci_sentence not in claude_text:
-        error(f"CLAUDE.md must contain the exact CI rule: {ci_sentence}")
 
 profile_requirements = {
     ".claude/profiles/solo-developer.md": (
@@ -431,7 +403,12 @@ for relative, phrases in profile_requirements.items():
             error(f"{relative} is missing required wording: {phrase}")
 
 markdown_files = []
-for relative in ("CLAUDE.md", "implementation_status.md", ".specify/memory/constitution.md"):
+for relative in (
+    "CLAUDE.md",
+    "AGENTS.md",
+    "implementation_status.md",
+    ".specify/memory/constitution.md",
+):
     path = root / relative
     if safe_is_file(path) and stays_inside_repository(path):
         markdown_files.append(path)
@@ -680,7 +657,7 @@ if [[ -z "$CONTEXT" ]]; then
   echo "WARNING: no context supplied; repository-only validation performed"
 fi
 
-if [[ $PROJECTION_STATUS -ne 0 || $ENGINE_VALIDATION_STATUS -ne 0 || $DOCUMENT_STATUS -ne 0 ]]; then
+if [[ $PROJECTION_STATUS -ne 0 || $ADAPTER_STATUS -ne 0 || $ENGINE_VALIDATION_STATUS -ne 0 || $DOCUMENT_STATUS -ne 0 ]]; then
   exit 1
 fi
 

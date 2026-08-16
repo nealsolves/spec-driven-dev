@@ -1,0 +1,9 @@
+format: 1
+kernel: .sdd/adapters/root-kernel.md
+limits:
+  max_lines: 280
+  target_lines: 180
+  max_bytes: 16384
+outputs:
+  claude: CLAUDE.md
+  codex: AGENTS.md
