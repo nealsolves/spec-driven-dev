@@ -436,4 +436,3 @@ All completed-slice and process artifact URLs resolve
 
 Repair any failed write or link before reporting completion. Do not claim the
 repository process is published merely because its PR is open.
-

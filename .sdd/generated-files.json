@@ -247,9 +247,9 @@
     },
     {
       "executable": false,
-      "output_sha256": "3f895edf040695e174b4848355a72d35c09e0371b97a8e411d2e5c8b9bf1198f",
+      "output_sha256": "c67fb6496072e8b1a3601cc194bdd9dafb9e4ef9e67c686e59d38eceda282892",
       "source": ".sdd/modules/workflows/feature-development.md",
-      "source_sha256": "3f895edf040695e174b4848355a72d35c09e0371b97a8e411d2e5c8b9bf1198f",
+      "source_sha256": "c67fb6496072e8b1a3601cc194bdd9dafb9e4ef9e67c686e59d38eceda282892",
       "target": ".claude/workflows/feature-development.md"
     },
     {

@@ -39,7 +39,8 @@
 2. Create or verify the parent issue before slice design begins. Record the
    objective, scope, non-goals, exit criteria, dependencies, cross-cutting
    invariants, and ordered slice ledger. P0 issue #3 is the dogfood example;
-   it follows this same contract without a delivery-status claim here.
+   it follows this same contract without exception and without a delivery-status
+   claim here.
 3. **Specify** user outcomes, acceptance criteria, boundaries, failure behavior,
    data use, operational consequences, and non-goals without choosing accidental
    implementation details. Transition to `SPECIFIED` when `spec_complete`.
@@ -72,7 +73,8 @@
 13. Add the pull request link to the parent issue at publication and identify
     the exact exit criterion advanced by the slice.
 14. After merge, check the slice complete only after updating the parent issue;
-    keep unresolved or not-yet-started slice references explicitly `pending`.
+    completed slices retain no `pending` reference, while unresolved or
+    not-yet-started slice references stay explicitly `pending`.
 
 ## Evidence
 

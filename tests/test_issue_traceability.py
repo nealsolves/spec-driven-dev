@@ -68,6 +68,27 @@ class IssueTraceabilityTest(unittest.TestCase):
         positions = [workflow.index(marker) for marker in markers]
         self.assertEqual(positions, sorted(positions))
 
+    def test_feature_workflow_requires_the_full_slice_lifecycle_contract(self):
+        workflow = (ROOT / ".sdd/modules/workflows/feature-development.md").read_text(
+            encoding="utf-8"
+        )
+        normalized = " ".join(workflow.split())
+        for clause in (
+            "Commit and link the approved slice design in `docs/design/`",
+            "Commit and link the implementation plan.",
+            "Implementation begins only after the parent issue links the approved "
+            "slice design and implementation plan.",
+            "Before material deviation work continues, update the design, plan, "
+            "and parent issue",
+            "Add the pull request link to the parent issue at publication and "
+            "identify the exact exit criterion advanced by the slice.",
+            "After merge, check the slice complete only after updating the parent issue;",
+            "completed slices retain no `pending` reference,",
+            "P0 issue #3 is the dogfood example; it follows this same contract "
+            "without exception",
+        ):
+            self.assertIn(clause, normalized)
+
     def test_operating_guides_explain_parent_issue_traceability(self):
         for path in ("README.md", ".sdd/README.md"):
             content = (ROOT / path).read_text(encoding="utf-8")
