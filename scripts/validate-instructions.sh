@@ -348,6 +348,7 @@ inventory(
     root / "scripts",
     {
         "policy-engine.py",
+        "render-agent-adapters.py",
         "render-compatibility.py",
         "validate-instructions.sh",
         "validate-feature-context.sh",
@@ -356,6 +357,7 @@ inventory(
 
 for relative in (
     "scripts/policy-engine.py",
+    "scripts/render-agent-adapters.py",
     "scripts/render-compatibility.py",
     "scripts/validate-instructions.sh",
     "scripts/validate-feature-context.sh",

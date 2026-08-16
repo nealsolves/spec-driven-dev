@@ -229,6 +229,17 @@ class ValidatorCliTest(unittest.TestCase):
         self.assertIn("not executable", result.stdout)
         self.assertIn("scripts/policy-engine.py", result.stdout)
 
+    def test_root_adapter_renderer_executable_bit_is_validated(self):
+        with repository_copy() as root:
+            renderer = root / "scripts/render-agent-adapters.py"
+            renderer.chmod(0o644)
+
+            result = run_script(root, through_bash=True)
+
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("not executable", result.stdout)
+        self.assertIn("scripts/render-agent-adapters.py", result.stdout)
+
     def test_feature_context_wrapper_forwards_context_and_status(self):
         with repository_copy() as root:
             feature_directory = root / "specs/001-validator"

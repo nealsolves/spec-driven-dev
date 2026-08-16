@@ -581,6 +581,10 @@ def read(path: str) -> str:
     return (ROOT / path).read_text(encoding="utf-8")
 
 
+def read_bytes(path: str) -> bytes:
+    return (ROOT / path).read_bytes()
+
+
 class InstructionStructureTest(unittest.TestCase):
     def test_workflow_directory_matches_routing_manifest(self):
         routing = yaml.safe_load(read(".claude/routing.yaml"))
@@ -745,25 +749,36 @@ class InstructionStructureTest(unittest.TestCase):
                 )
 
     def test_root_kernel_is_compact_and_has_required_sections(self):
-        root = read("CLAUDE.md")
-        self.assertLessEqual(len(root.splitlines()), 350)
+        root = read(".sdd/adapters/root-kernel.md")
+        config = yaml.safe_load(read(".sdd/controls/adapters.yaml"))
+        self.assertEqual(config["limits"]["target_lines"], 180)
+        self.assertEqual(config["limits"]["max_lines"], 280)
+        self.assertLessEqual(len(root.splitlines()), 180)
         for heading in (
             "Purpose and Scope",
-            "Project Identity",
-            "Authority Hierarchy",
-            "Startup Protocol",
-            "Universal Invariants",
-            "Lifecycle",
-            "Deterministic Routing",
-            "Git, Pull Requests, and CI",
-            "Exceptions",
-            "Human Escalation",
-            "Definition of Done",
+            "Authority and Canonical Sources",
+            "Startup and Change Discovery",
+            "Routing and Deterministic Decisions",
+            "Implementation, Validation, and Review",
+            "Lifecycle and Stop Conditions",
+            "Git, CI, and Documentation Parity",
+            "Completion and Escalation",
         ):
-            self.assertRegex(root, rf"(?m)^## (?:\d+\. )?{re.escape(heading)}$")
+            self.assertRegex(root, rf"(?m)^## {re.escape(heading)}$")
+
+    def test_generated_root_adapters_share_the_exact_canonical_body(self):
+        kernel = read_bytes(".sdd/adapters/root-kernel.md")
+        for target in ("CLAUDE.md", "AGENTS.md"):
+            with self.subTest(target=target):
+                self.assertTrue((ROOT / target).is_file(), f"missing {target}")
+                preamble, separator, body = read_bytes(target).partition(b"\n\n")
+                self.assertTrue(preamble.startswith(b"<!-- Generated root adapter"))
+                self.assertEqual(separator, b"\n\n")
+                self.assertEqual(body, kernel)
+                self.assertLessEqual(len(read(target).splitlines()), 180)
 
     def test_root_names_every_lifecycle_state(self):
-        root = read("CLAUDE.md")
+        root = read(".sdd/adapters/root-kernel.md")
         states = (
             "UNCLASSIFIED",
             "CLASSIFIED",
@@ -791,48 +806,54 @@ class InstructionStructureTest(unittest.TestCase):
             self.assertIn(state, root)
 
     def test_root_has_exact_ci_authority_and_policy_gated_publication(self):
-        root = read("CLAUDE.md")
+        root = read(".sdd/adapters/root-kernel.md")
         self.assertIn(
             "Required CI on the exact merge candidate is authoritative for merge.",
             root,
         )
-        self.assertIn("only when the authority policy permits", root)
+        self.assertIn("Publication is always policy-gated", root)
         self.assertNotIn("will be committed and pushed", root.lower())
 
-    def test_root_links_control_plane_and_operating_guide(self):
-        root = read("CLAUDE.md")
+    def test_root_names_canonical_control_plane_as_inline_paths(self):
+        root = read(".sdd/adapters/root-kernel.md")
         for target in (
-            ".claude/project.yaml",
-            ".claude/routing.yaml",
-            ".claude/policy.yaml",
-            ".claude/lifecycle.yaml",
-            ".claude/README.md",
+            ".sdd/controls/project.yaml",
+            ".sdd/controls/routing.yaml",
+            ".sdd/controls/policy.yaml",
+            ".sdd/controls/lifecycle.yaml",
+            ".sdd/README.md",
         ):
-            self.assertRegex(root, rf"\[[^\]]+\]\({re.escape(target)}\)")
+            self.assertIn(f"`{target}`", root)
+        self.assertIsNone(re.search(r"\[[^]]+\]\([^)]+\)", root))
+        self.assertNotIn(".claude/", root)
 
     def test_root_selects_workflow_before_optional_feature(self):
-        root = read("CLAUDE.md")
-        self.assertIn("Determine the workflow family before resolving a feature", root)
-        self.assertIn("implementation_status.md does not select the active feature", root)
+        root = read(".sdd/adapters/root-kernel.md")
+        self.assertIn(
+            "Determine the workflow family from explicit intent before selecting a\nfeature",
+            root,
+        )
+        self.assertIn(
+            "`implementation_status.md` is an\noperational ledger and never selects the active change by itself",
+            root,
+        )
 
     def test_authority_hierarchy_is_complete_and_ordered(self):
-        root = read("CLAUDE.md")
+        root = read(".sdd/adapters/root-kernel.md")
         hierarchy = (
-            "External law and contract",
-            "Constitution",
-            "Approved active artifacts",
-            "Active project policy and loaded modules",
-            "Root kernel",
-            "Implementation, telemetry, data, and consumer behavior",
-            "Conventional practice",
+            "external law and contract",
+            "`.specify/memory/constitution.md`",
+            "approved active specifications, plans, tasks",
+            "validated project policy and loaded modules",
+            "this root kernel",
+            "actual implementation, telemetry, data, and consumer behavior",
+            "conventional practice",
         )
         positions = [root.index(item) for item in hierarchy]
         self.assertEqual(positions, sorted(positions))
 
-    def test_root_states_safe_defaults_and_decision_outcomes(self):
-        root = read("CLAUDE.md")
-        self.assertIn("unconfigured", root)
-        self.assertIn("remote and production actions are disabled", root)
+    def test_root_states_deterministic_decision_outcomes(self):
+        root = read(".sdd/adapters/root-kernel.md")
         for outcome in (
             "autonomous",
             "autonomous_with_enhanced_gates",
@@ -842,9 +863,9 @@ class InstructionStructureTest(unittest.TestCase):
             self.assertIn(outcome, root)
 
     def test_root_governs_post_bootstrap_instruction_changes(self):
-        root = read("CLAUDE.md")
+        root = read(".sdd/adapters/root-kernel.md")
         self.assertIn(
-            "every instruction-system change is\n  `human_required` in the MVP",
+            "every instruction-system change requires human authority",
             root,
         )
         self.assertIn("a proposed policy cannot approve its own revision", root)

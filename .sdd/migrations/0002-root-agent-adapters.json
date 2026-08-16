@@ -1,0 +1,16 @@
+{
+  "migration_id": "0002-root-agent-adapters",
+  "new_outputs": {
+    "AGENTS.md": "de3f5eb9dcf2f58aef6a6edc1849ef758457a57204a8cc0acefbe2b42ea91898",
+    "CLAUDE.md": "fbc6683a1b6d9c471185351ca93cfdb4c3b61cf6f47cf033b4c6b9a35932a5f2"
+  },
+  "new_sources": {
+    ".sdd/adapters/root-kernel.md": "e9ffe041d783defb851c6d6d9734b5559ab5e8269041c98a450bc4ec840dc71b",
+    ".sdd/controls/adapters.yaml": "918713d53483bf2e4152ad0bf26ca1e062fad23255ee32bbc58699b322501c43"
+  },
+  "old_outputs": {
+    "AGENTS.md": null,
+    "CLAUDE.md": "8f960d35d7ebf31cbd0a80c5f6cdc2a7b63c23a0c869a9e7a97fce5521c0ab70"
+  },
+  "renderer": "sdd.adapters.agent:v1"
+}
