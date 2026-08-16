@@ -1,288 +1,279 @@
 # Thin Root Agent Adapters Design
 
-Status: Proposed Slice Design  
-Date: 2026-08-15  
-Roadmap: [Issue #2 P0-P8 design](issue-2-p0-p8-roadmap.md)  
+Status: Approved
+
+Date: 2026-08-15
+
+Roadmap: [Issue #2 P0-P8 design](issue-2-p0-p8-roadmap.md)
+
 Phase: [P0 — Trustworthy and adoptable baseline](https://github.com/nealsolves/spec-driven-dev/issues/3), Slice 3
 
 ## Purpose
 
 Generate small, deterministic `CLAUDE.md` and `AGENTS.md` root adapters from
-one canonical `.sdd/` model. The adapters expose only the stable operating
-kernel needed to enter the instruction system; detailed doctrine remains in
-canonical routed modules.
+one canonical Markdown kernel. Both agents receive the same normative body;
+only a short, fixed, informational preamble identifies the host adapter.
 
-This slice advances the P0 exit criterion that generated Claude and Codex
-adapters are reproducible, semantically conformant, ownership-tracked, and
-within hard size limits. It does not implement P6's extensible adapter packages
-or P7's general semantic instruction comparison.
+This slice advances the P0 exit criterion that Claude and Codex entry adapters
+are reproducible, conformant, ownership-tracked, and within hard size limits.
+It deliberately leaves structured rule models, renderer plugins, unmanaged
+regions, and semantic policy comparison to P6 and P7.
 
-## Scope
+## Design principles
 
-The slice will:
+- One authored normative body; never maintain parallel Claude and Codex prose.
+- Generate simple files rather than interpret arbitrary prose.
+- Prove P0 conformance by byte identity, not by claiming semantic inference.
+- Keep the public check/write boundary stable so later phases can replace the
+  internal model without changing repository workflows.
+- Refuse unsafe or divergent writes; never add a convenience overwrite flag.
+- Fail generation when content exceeds its budget; never truncate policy.
 
-- add a versioned canonical adapter control at `.sdd/controls/adapters.yaml`;
-- validate that control against `.sdd/schemas/adapters.schema.json`;
-- build a small normalized `AdapterModel` from structured sections and rules;
-- render managed `CLAUDE.md` and `AGENTS.md` outputs deterministically;
-- track their source and output digests in a dedicated generated manifest;
-- teach the compatibility projector to recognize, but not project, the new
-  canonical-only adapter control, schema, manifest, and migration metadata;
-- provide non-mutating check mode and safe, manifest-last write mode;
-- enforce physical-line and byte budgets before any write;
-- check essential cross-adapter rule coverage and normative strength;
-- integrate adapter parity into the primary repository validator; and
-- update current guidance to state that both root files are generated entry
-  adapters and `.sdd/` remains authoritative.
+## Canonical artifacts
 
-The slice will not:
+### Shared kernel
 
-- create a plugin or third-party renderer interface;
-- support unmanaged regions inside generated root adapters;
-- claim semantic equivalence for arbitrary prose;
-- add general policy-version semantic diffs;
-- render vendor-specific deep modules;
-- mutate remote state; or
-- merge the compatibility and root-adapter manifests into a new global
-  manifest format.
+`.sdd/adapters/root-kernel.md` contains the complete authored root kernel. It
+contains only the stable entry guidance approved by the roadmap:
 
-Those capabilities remain assigned to P6 and P7.
-
-## Canonical model
-
-`.sdd/controls/adapters.yaml` is the only authored source for root-adapter
-content and limits. Format version `1` contains:
-
-- `adapter_format_version`;
-- global budgets: hard maximum `280` physical lines, recommended target `180`
-  physical lines, and hard maximum `16384` UTF-8 bytes per output;
-- ordered kernel sections;
-- stable rule IDs;
-- a normative strength for each rule (`must`, `must_not`, or `informational`);
-- portable rule text;
-- source references into canonical controls, modules, the operating guide, or
-  constitution;
-- declared audience (`all`, `claude`, or `codex`); and
-- narrowly scoped platform invocation notes where Claude and Codex genuinely
-  differ.
-
-The control rejects unknown fields, duplicate IDs, empty rules, nonexistent or
-unsafe source references, unsupported audiences/strengths, and a platform-only
-normative rule without an explicit justification.
-
-The initial model contains only the roadmap-approved stable kernel:
-
-1. canonical source location and authority precedence;
+1. canonical `.sdd/` authority and precedence;
 2. current-change discovery from explicit intent and approved artifacts;
 3. task-based module routing and mandatory loading;
 4. deterministic policy evaluation and technical-failure behavior;
 5. stop, prohibition, and human-authorization boundaries;
 6. test-first implementation, validation, independent review, and repair;
-7. documentation and generated-output parity obligations; and
-8. supported local CLI entrypoints.
+7. documentation and generated-output parity; and
+8. supported local command entrypoints.
 
 Status, history, volatile evidence, full schemas, remote orchestration, and deep
-framework guidance are linked rather than copied into root adapters.
+framework guidance remain in canonical controls and routed modules. The kernel
+names their repository-root paths as inline code instead of copying them.
+Clickable relative links remain in maintained guides because one identical
+Markdown body cannot resolve the same relative link from both
+`.sdd/adapters/` and the repository root.
 
-## Package boundaries
+### Small renderer control
 
-`src/sdd/adapters/agent.py` owns the pure root-adapter domain:
+`.sdd/controls/adapters.yaml` contains only:
 
-- strict control loading and validation;
-- immutable model types;
-- deterministic rendering;
-- size and essential-conformance findings;
-- strict ownership-manifest loading;
-- non-mutating repository checks; and
-- safe local convergence.
+```yaml
+format: 1
+kernel: .sdd/adapters/root-kernel.md
+limits:
+  max_lines: 280
+  target_lines: 180
+  max_bytes: 16384
+outputs:
+  claude: CLAUDE.md
+  codex: AGENTS.md
+```
 
-`scripts/render-agent-adapters.py` is a thin executable boundary with:
+The loader accepts exactly these keys and values. It rejects unknown or missing
+fields, unsafe paths, duplicate output paths, non-integer limits, unsupported
+formats, a hard line limit above `280`, and output paths other than the two
+declared root files.
+
+P0 validates this compact contract directly in Python rather than introducing
+a new JSON Schema. A future format `2` may add the normalized rule model and
+renderer registry planned for P6; format `1` remains readable for explicit
+migration.
+
+## Deterministic outputs
+
+Each generated file is:
+
+```text
+fixed informational preamble for the target
++ exact root-kernel bytes
+```
+
+The preamble states that the file is generated, names the canonical sources,
+identifies Claude or Codex, and says not to edit the output directly. It cannot
+add normative requirements or vary policy between agents. Source paths in the
+shared body are inline code, not location-dependent Markdown links.
+
+The shared body in both outputs must be byte-identical to
+`.sdd/adapters/root-kernel.md`. The renderer uses UTF-8, LF line endings, and
+exactly one trailing newline. It emits no timestamps, host paths, branch names,
+test counts, or other volatile values.
+
+Generation fails before mutation if an output exceeds `280` physical lines or
+`16384` bytes. Repository acceptance tests additionally require the initial
+outputs to meet the `180`-line target. The target is a design pressure; the hard
+limits remain the compatibility contract.
+
+## Package and command boundaries
+
+`src/sdd/adapters/agent.py` contains the complete P0 domain:
+
+- immutable config, output, plan, and finding types;
+- strict config and manifest loading;
+- deterministic in-memory rendering;
+- line/byte and shared-body checks;
+- non-mutating repository parity checks; and
+- safe convergence of the two fixed root outputs.
+
+The implementation stays in one focused module until a second materially
+different adapter strategy justifies extraction. It does not refactor or depend
+on private compatibility-projector internals.
+
+`scripts/render-agent-adapters.py` is a thin executable wrapper:
 
 ```text
 render-agent-adapters.py --root PATH --check
 render-agent-adapters.py --root PATH --write
 ```
 
-Expected parity findings exit `1`; technical inability to inspect or apply the
-projection exits `3`; success exits `0`. Human output is concise and stable.
-The package API returns structured findings so tests and future CLI commands do
-not parse prose.
+Success exits `0`; ordinary parity or ownership findings exit `1`; technical
+inability to inspect or apply the plan exits `3`. Public failures are concise
+and structured without expected tracebacks. Check mode is the default used by
+the primary validator.
 
-The existing compatibility projector remains responsible only for `.claude/`.
-The root-adapter renderer neither reads nor writes compatibility targets.
-Its canonical-source inventory is extended explicitly so
-`.sdd/controls/adapters.yaml`, `.sdd/schemas/adapters.schema.json`,
-`.sdd/agent-adapters.generated.json`, and the adapter migration record are
-accepted as canonical-only artifacts. They are excluded from the legacy
-`.claude/` projection, whose exact four controls, four policy schemas, and
-module inventory remain unchanged. Any other new control, schema, or root
-artifact still fails closed.
+## Bounded P0 conformance
 
-## Deterministic rendering
+P0 does not parse or compare arbitrary policy meaning. An adapter conforms when:
 
-Both renderers consume the same normalized rule list. Each output has:
+- its fixed preamble is exactly the renderer-owned preamble for that target;
+- the remainder is byte-identical to the canonical shared kernel;
+- both outputs therefore contain the same normative bytes in the same order;
+- the canonical control and kernel paths are safe and present.
 
-- a generated-file warning;
-- canonical authority and source links;
-- the same ordered section and rule IDs;
-- mechanically rendered normative strength;
-- a compact platform invocation note; and
-- a final pointer to deeper routed guidance.
+This proves that the renderer did not add, remove, weaken, strengthen, or reorder
+normative content between agents. P6 may replace the shared body with a richer
+normalized model; P7 may add rule fingerprints and semantic-diff classes. Those
+enhancements do not belong in format `1`.
 
-Line endings are LF, encoding is UTF-8, files end with one newline, section and
-rule ordering comes from the canonical model, and serialization contains no
-timestamps, host paths, branch names, test counts, or other volatile values.
+## Ownership manifest
 
-Generation fails rather than truncating when either output exceeds 280
-physical lines or 16384 bytes. Repository tests also enforce the design target
-of at most 180 physical lines for the initial generated outputs; the control's
-hard limit remains 280 for compatible future evolution.
-
-## Essential conformance
-
-P0 conformance is deliberately structural, not an arbitrary natural-language
-equivalence claim. A rendered adapter conforms when:
-
-- every canonical rule applicable to its audience is represented exactly once;
-- no undeclared rule ID is present;
-- the rendered normative strength matches the model;
-- portable rules render from the same canonical text;
-- every platform-only variation is declared and justified; and
-- required canonical sources and routed modules exist.
-
-The renderer emits stable, unobtrusive rule identity markers that the checker
-can inventory. Tests independently compare the model and both rendered
-outputs. P7 may later replace this bounded check with richer rule fingerprints
-and semantic-diff classifications.
-
-## Ownership and migration
-
-`.sdd/agent-adapters.generated.json` is a canonical JSON ownership manifest
-for `CLAUDE.md` and `AGENTS.md`. It records:
+`.sdd/agent-adapters.generated.json` is canonical JSON containing only:
 
 - manifest format and renderer identity;
-- canonical control path and digest;
-- each output path, digest, executable state, line count, and byte count; and
-- adapter format version.
+- adapter-control path and digest;
+- shared-kernel path and digest;
+- adapter format version; and
+- each output path, SHA-256 digest, line count, byte count, and non-executable
+  mode.
 
-The manifest is separate from `.sdd/generated-files.json` because that existing
-format is intentionally strict and owned by the temporary `.claude/`
-compatibility renderer. The manifests own disjoint targets and do not create a
-dual-write path. Compatibility planning treats the adapter manifest as
-canonical-only metadata and never copies it into `.claude/`.
+It is separate from `.sdd/generated-files.json`, whose strict format and targets
+belong to the temporary `.claude/` compatibility renderer. The two manifests own
+disjoint outputs and do not create a dual-write path.
 
-The repository migration is explicit. The approved Slice 3 commit introduces
-the canonical control, newly rendered root adapters, manifest, and a durable
-`.sdd/migrations/0002-root-agent-adapters.json` record together. The migration
-record binds the prior `CLAUDE.md` digest, the absent prior `AGENTS.md` state,
-the new canonical control digest, renderer identity, and resulting output
-digests. Runtime write mode does not silently adopt or overwrite an unmanaged
-preexisting root file.
+The compatibility projector is changed only enough to recognize
+`.sdd/controls/adapters.yaml`, `.sdd/adapters/`, and
+`.sdd/agent-adapters.generated.json` as canonical-only artifacts. It never
+copies them into `.claude/`, and its existing four controls, four schemas, and
+module output inventory remain unchanged. Any other new canonical artifact
+still fails closed.
 
-After migration, write mode may replace an output only when it is missing,
-already desired, or matches its prior owned digest and file mode. Divergent,
-symlinked, special, case-colliding, or otherwise unsafe targets block without
-being changed. The manifest is written last. Interrupted writes are rerunnable
-and converge from prior-or-desired owned states.
+## Safe write behavior
 
-## Validation flow
+Check mode performs no filesystem mutation, including bytecode, temporary
+files, or metadata changes.
 
-The primary validator runs adapter check mode after canonical compatibility
-parity and before success output. It also enforces:
+Write mode handles only two fixed files in the already validated repository
+root. It:
 
-- the renderer script is present and executable;
-- the adapter control and schema are in the exact inventory;
-- both root outputs are regular non-symlink files;
-- manifest ownership covers exactly `CLAUDE.md` and `AGENTS.md`;
-- the hard limits and initial 180-line target pass; and
-- essential conformance has no missing, conflicting, extra, or unknown result.
+1. loads and validates the config, kernel, prior manifest, root, and targets;
+2. renders both outputs and the desired manifest completely in memory;
+3. verifies byte identity and limits;
+4. accepts each target only when missing, already desired, or equal to its
+   prior owned digest and mode;
+5. writes changed outputs through same-directory temporary files and
+   `os.replace` after immediate target rechecks;
+6. verifies the final live output bytes and modes, then rechecks the repository
+   root and `.sdd/` directory identities;
+7. rechecks the prior-or-desired manifest state; and
+8. replaces the ownership manifest last.
 
-Instruction changes update `.sdd/` first, regenerate both root adapters and
-their manifest, regenerate affected `.claude/` compatibility outputs when
-applicable, and run the complete validator.
+Symlinked, special, divergent, case-conflicting, unrepresentable, or otherwise
+unsafe targets block without being changed. A missing manifest never grants
+permission to overwrite an existing divergent root file. Interrupted writes are
+rerunnable because prior-or-desired owned states are accepted.
 
-## Safety and error handling
+There is no staging tree or directory-creation protocol: both targets live in
+the existing repository root and the complete candidate bytes already exist in
+memory. The writer provides point-in-time safe, idempotent convergence, not
+whole-directory atomicity.
 
-Planning and check mode perform no filesystem mutation, including bytecode,
-temporary files, or metadata changes. Write mode:
+## Repository migration
 
-1. validates the root and canonical model;
-2. renders both outputs completely in memory;
-3. validates limits and conformance;
-4. validates the prior manifest and all target states;
-5. stages the complete candidate in a temporary directory;
-6. checks candidate output and manifest bytes;
-7. rechecks parent identities and target ownership immediately before each
-   same-directory atomic replacement;
-8. verifies final live outputs; and
-9. replaces the ownership manifest last.
+The Slice 3 commit introduces the config, shared kernel, both generated files,
+ownership manifest, and `.sdd/migrations/0002-root-agent-adapters.json`
+together. The migration record binds the previous `CLAUDE.md` digest, records
+that `AGENTS.md` was absent, and records the new canonical and output digests.
 
-Expected drift produces structured findings and exit `1`. Unsafe paths,
-unrepresentable data, I/O failures, or contradictory runtime state produce a
-structured technical block and exit `3`; public commands do not leak a
-traceback for expected repository failures.
+This is repository migration evidence, not a runtime adoption feature. Runtime
+write mode does not silently adopt or overwrite unmanaged legacy files; general
+legacy adoption remains assigned to P1.
 
-The writer provides idempotent convergence, not whole-directory atomicity.
-Concurrent mutation after the final point-in-time checks is outside that
-claim, but the writer must never knowingly return success with a manifest that
-does not describe the final verified outputs.
+## Primary validation
+
+The primary validator invokes adapter check mode after compatibility parity and
+before its existing success message. It also registers the renderer script as
+an executable repository artifact and requires both root files to be regular,
+non-symlink files. Its existing Markdown-link validation expands to include
+`AGENTS.md`; the shared kernel intentionally uses location-independent inline
+paths.
+
+Adapter check mode owns config strictness, manifest integrity, byte generation,
+shared-body identity, file modes, and budgets. The shell validator does not
+duplicate those checks.
+
+Instruction changes update canonical `.sdd/` sources first, regenerate affected
+compatibility outputs when needed, regenerate both root adapters, and run the
+complete primary validator.
 
 ## Testing
 
 Test-first coverage includes:
 
-- strict schema/control parsing and duplicate/unknown-field rejection;
-- deterministic model and byte rendering;
-- Claude/Codex audience filtering and declared platform variations;
-- hard line/byte failures and the repository's 180-line target;
-- essential rule identity and normative-strength conformance;
-- strict manifest parsing and canonical serialization;
-- missing, stale, conflicting, unexpected, unsafe, and case-colliding outputs;
+- strict format-1 config parsing and safe fixed paths;
+- deterministic preambles, shared-body bytes, LF endings, and serialization;
+- 280-line/16384-byte hard failures and the repository's 180-line target;
+- manifest strictness and canonical JSON;
+- missing, stale, conflicting, unsafe, and mode-drift output findings;
 - no-mutation check mode;
-- safe initial creation in a new fixture;
-- refusal to overwrite unmanaged or divergent legacy root files;
-- manifest-last interruption and rerun convergence;
-- source, parent, target, and manifest race injection;
-- CLI exit/status behavior without tracebacks;
-- validator propagation and output suppression;
-- compatibility-projector allowlisting that excludes canonical-only adapter
-  artifacts from the unchanged legacy output bundle;
-- exact repository generation parity;
-- executable bits and script inventory; and
+- safe creation in a new fixture and refusal of unmanaged divergence;
+- interrupted output replacement, manifest-last behavior, and rerun convergence;
+- target and manifest changes at mutation boundaries;
+- CLI exit codes and concise failure output;
+- compatibility exclusion of canonical-only adapter artifacts;
+- primary-validator propagation and success-output suppression;
+- exact repository regeneration and migration digests; and
 - the complete existing policy, compatibility, package, and validator suites.
+
+Broad rule-level semantic fixtures, renderer plugins, arbitrary unmanaged
+regions, and generalized adapter migrations are explicitly deferred.
 
 ## Documentation
 
-The root README and canonical `.sdd/README.md` will explain:
+The root README and canonical `.sdd/README.md` explain that:
 
-- `.sdd/controls/adapters.yaml` is authoritative for root adapter content;
-- `CLAUDE.md` and `AGENTS.md` are generated, managed entry adapters;
-- direct edits are rejected and must be made canonically;
-- check and write commands;
-- the hard and target size budgets; and
-- the bounded nature of P0 conformance versus P6/P7 maturity.
+- `.sdd/adapters/root-kernel.md` is the normative shared root source;
+- `.sdd/controls/adapters.yaml` defines only rendering and budgets;
+- `CLAUDE.md` and `AGENTS.md` are generated managed entry adapters;
+- direct output edits are rejected;
+- check and write commands are available; and
+- P0 byte identity is intentionally narrower than P6/P7 conformance.
 
-The approved roadmap design is tracked in this slice so future phase plans can
-cite the same architecture rather than task transcripts.
+The approved roadmap design is tracked in this slice so later phase plans cite
+the same architecture rather than a task transcript.
 
 ## Acceptance criteria
 
-The slice is complete when:
-
-1. `CLAUDE.md` and `AGENTS.md` reproduce byte-for-byte from the canonical
-   adapter control.
-2. Each output is at most 180 physical lines in the initial repository, never
-   exceeds the 280-line/16384-byte hard limits, and ends with one LF newline.
-3. Essential conformance proves all applicable canonical rule IDs and
-   normative strengths are represented exactly once without undeclared policy.
-4. Check mode detects any canonical, manifest, output, mode, ownership, or
-   conformance drift without mutation.
-5. Write mode preserves unmanaged/divergent files, converges owned states
-   safely, and commits the manifest last.
-6. The primary validator fails closed on adapter drift or technical blocks and
-   remains quiet on success except for its existing final status.
-7. The migration record binds the legacy and generated states reproducibly.
-8. Existing policy behavior, compatibility projection, packaging, and all
-   prior P0 tests remain green.
-9. An independent implementation review reports no unresolved Critical or
-   Important finding.
+1. `CLAUDE.md` and `AGENTS.md` reproduce byte-for-byte from one canonical
+   kernel plus their fixed informational preambles.
+2. The normative body of both outputs is byte-identical to the shared kernel.
+3. Each initial output is at most 180 physical lines and remains within the
+   280-line/16384-byte hard limits.
+4. Check mode detects config, source, manifest, output, mode, ownership, or
+   budget drift without mutation.
+5. Write mode preserves unmanaged or divergent files, converges owned states,
+   and commits the manifest last.
+6. Compatibility outputs remain exactly the legacy bundle; canonical-only
+   adapter artifacts are accepted but never projected into `.claude/`.
+7. The primary validator fails closed on adapter drift or technical blocks.
+8. The migration record binds old and new repository states reproducibly.
+9. Existing policy behavior, compatibility projection, packaging, and all prior
+   P0 tests remain green.
+10. Independent review reports no unresolved Critical or Important finding.
