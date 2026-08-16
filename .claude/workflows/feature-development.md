@@ -7,12 +7,13 @@
 - Resolve the active feature from explicit intent and approved artifacts, not
   status alone. Start at `UNCLASSIFIED` with typed facts and provenance.
 - The constitution and approved business intent are authoritative; implementation
-  begins only after applicable specification gates pass.
+  work starts only after applicable specification gates pass.
 
 ## Artifacts
 
-- Constitution check, feature specification, clarification record, plan,
-  quality checklist, tasks, analysis result, instruction context, tests,
+- Constitution check, parent issue and ordered slice ledger, feature
+  specification, clarification record, approved slice design, implementation
+  plan, quality checklist, tasks, analysis result, instruction context, tests,
   implementation diff, review findings, repairs, and convergence evidence.
 - Use the feature instruction context template for profile, modules, facts,
   risk, authority, hashes, lifecycle state, and exceptions.
@@ -22,6 +23,9 @@
 - Each lifecycle transition is requested from the engine with current evidence.
 - Material acceptance criteria trace through plan, tasks, implementation, tests,
   and review. Activated modules and enhanced gates are mandatory.
+- Each slice links its tracked design in `docs/design/` before planning and its
+  tracked plan in `docs/plans/` before implementation; the parent issue remains
+  the durable ledger for each slice's `Design`, `Plan`, and `PR` references.
 - Clarifications are triaged as `inferable`, `reversible_default`, or
   `material_business`; the last category requires an escalation packet and a
   validated response.
@@ -32,28 +36,43 @@
 1. Read the constitution. The agent extracts observable facts with provenance;
    the engine classifies and routes them. Validate context, run evaluation,
    load the returned profiles/modules/workflows, and transition to `CLASSIFIED`.
-2. **Specify** user outcomes, acceptance criteria, boundaries, failure behavior,
+2. Create or verify the parent issue before slice design begins. Record the
+   objective, scope, non-goals, exit criteria, dependencies, cross-cutting
+   invariants, and ordered slice ledger. P0 issue #3 is the dogfood example;
+   it follows this same contract without a delivery-status claim here.
+3. **Specify** user outcomes, acceptance criteria, boundaries, failure behavior,
    data use, operational consequences, and non-goals without choosing accidental
    implementation details. Transition to `SPECIFIED` when `spec_complete`.
-3. **Clarify** each ambiguity using repository evidence first. Resolve inferable
+4. **Clarify** each ambiguity using repository evidence first. Resolve inferable
    items with citations, apply a configured reversible default when safe, and
    send material business choices through a bounded escalation packet.
-4. **Plan** the smallest reversible architecture and implementation approach,
+5. Commit and link the approved slice design in `docs/design/` from the parent
+   issue before creating its implementation plan.
+6. **Plan** the smallest reversible architecture and implementation approach,
    mapping every activated rule, readiness/data/control profile, migration,
-   security, testing, release, and rollback concern. Update the context hashes.
-5. Create and verify a **checklist** that tests specification quality and risk
+   security, testing, release, and rollback concern. Commit and link the implementation plan.
+   Record its `docs/plans/` link in the parent issue, then update the context
+   hashes.
+7. Create and verify a **checklist** that tests specification quality and risk
    coverage rather than restating implementation tasks.
-6. Create ordered **tasks** that trace to acceptance criteria, include tests
+8. Create ordered **tasks** that trace to acceptance criteria, include tests
    before behavior, and identify safe checkpoints and rollback.
-7. **Analyze** specification, plan, checklist, tasks, facts, and modules for
+9. **Analyze** specification, plan, checklist, tasks, facts, and modules for
    contradictions, omissions, unsupported assumptions, and prohibited work.
-8. **Implement** test-first: observe the relevant failure, make the smallest
-   coherent change, and rerun affected validation. Record deviations immediately.
-9. Run policy-activated review, repair every required finding, and repeat within
+10. Implementation begins only after the parent issue links the approved slice
+    design and implementation plan. Work test-first: observe the relevant
+    failure, make the smallest coherent change, and rerun affected validation.
+    Before material deviation work continues, update the design, plan, and
+    parent issue, then reevaluate affected evidence.
+11. Run policy-activated review, repair every required finding, and repeat within
    resource limits. Reevaluate risk and authority whenever facts or scope change.
-10. **Converge** by mapping final behavior and evidence back to the spec, running
+12. **Converge** by mapping final behavior and evidence back to the spec, running
     exact candidate checks, refreshing hashes, and following the selected code,
     release, or deployment terminal path.
+13. Add the pull request link to the parent issue at publication and identify
+    the exact exit criterion advanced by the slice.
+14. After merge, check the slice complete only after updating the parent issue;
+    keep unresolved or not-yet-started slice references explicitly `pending`.
 
 ## Evidence
 

@@ -2,9 +2,9 @@
   "files": [
     {
       "executable": false,
-      "output_sha256": "73a3c0447a099727594e5a2fd6f289d36c56b7169c07aaf6532c13694769a0ab",
+      "output_sha256": "4b735c314ac0da2349f2ff10cd3b362cf3a74c9f9e4b76ff28cc78e3bb71384c",
       "source": ".sdd/README.md",
-      "source_sha256": "73a3c0447a099727594e5a2fd6f289d36c56b7169c07aaf6532c13694769a0ab",
+      "source_sha256": "4b735c314ac0da2349f2ff10cd3b362cf3a74c9f9e4b76ff28cc78e3bb71384c",
       "target": ".claude/README.md"
     },
     {
@@ -247,9 +247,9 @@
     },
     {
       "executable": false,
-      "output_sha256": "965e37840aa404db972c562017208d66fc04acba38e3536c64a146c74c50e3d2",
+      "output_sha256": "3f895edf040695e174b4848355a72d35c09e0371b97a8e411d2e5c8b9bf1198f",
       "source": ".sdd/modules/workflows/feature-development.md",
-      "source_sha256": "965e37840aa404db972c562017208d66fc04acba38e3536c64a146c74c50e3d2",
+      "source_sha256": "3f895edf040695e174b4848355a72d35c09e0371b97a8e411d2e5c8b9bf1198f",
       "target": ".claude/workflows/feature-development.md"
     },
     {

@@ -12,6 +12,8 @@ VALIDATOR_REPOSITORY_ARTIFACTS = (
     ".sdd",
     ".claude",
     ".specify",
+    ".github",
+    "docs",
     "scripts",
     "src",
     "CLAUDE.md",

@@ -39,3 +39,39 @@ class IssueTraceabilityTest(unittest.TestCase):
             content = (ROOT / path).read_text(encoding="utf-8").lower()
             self.assertIn("retrospective reconstruction", content)
             self.assertIn("introduces no new decision", content)
+
+    def test_issue_template_has_parent_and_slice_contract(self):
+        content = (ROOT / ".github/ISSUE_TEMPLATE/spec-driven-change.md").read_text(
+            encoding="utf-8"
+        )
+        for heading in (
+            "## Objective", "## Scope", "## Non-goals", "## Exit criteria",
+            "## Dependencies", "## Cross-cutting invariants",
+            "## Ordered implementation slices",
+        ):
+            self.assertIn(heading, content)
+        for field in ("Design:", "Plan:", "PR:", "Exit criterion advanced:"):
+            self.assertIn(field, content)
+
+    def test_feature_workflow_orders_issue_design_plan_pr_and_merge_updates(self):
+        workflow = (ROOT / ".sdd/modules/workflows/feature-development.md").read_text(
+            encoding="utf-8"
+        )
+        markers = (
+            "Create or verify the parent issue",
+            "Commit and link the approved slice design",
+            "Commit and link the implementation plan",
+            "Implementation begins only after",
+            "Add the pull request link",
+            "After merge, check the slice complete",
+        )
+        positions = [workflow.index(marker) for marker in markers]
+        self.assertEqual(positions, sorted(positions))
+
+    def test_operating_guides_explain_parent_issue_traceability(self):
+        for path in ("README.md", ".sdd/README.md"):
+            content = (ROOT / path).read_text(encoding="utf-8")
+            self.assertIn("spec-driven parent issue", content.lower())
+            self.assertIn("docs/design/", content)
+            self.assertIn("docs/plans/", content)
+            self.assertIn("Design`, `Plan`, and `PR", content)

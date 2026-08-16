@@ -176,6 +176,22 @@ and rollback evidence; it simply uses the shorter declared lifecycle path.
 This template ships reusable forms only. It does not create a fake active
 feature, maintenance record, or production evidence bundle.
 
+## Spec-Driven Parent Issue
+
+Feature delivery uses one spec-driven parent issue as the durable ledger for
+its ordered implementation slices. Start from the
+[issue template](../.github/ISSUE_TEMPLATE/spec-driven-change.md), then link
+each slice's tracked [design](../docs/design/) and
+[implementation plan](../docs/plans/) in that issue. Every slice exposes
+`Design`, `Plan`, and `PR`: link the design before planning, the plan before
+implementation, and the pull request when it opens; check the slice complete
+only after merge and the issue update. Sub-issues are not required.
+
+The canonical [feature-development workflow](../.sdd/modules/workflows/feature-development.md)
+defines these gates, including updating the design, plan, and issue before
+material deviation work continues. P0 issue #3 is the dogfood example for this
+contract.
+
 ## Delivery Boundary
 
 ### MVP

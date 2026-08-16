@@ -154,6 +154,17 @@ work can use the [maintenance workflow](.sdd/modules/workflows/maintenance.md)
 without creating a fake feature directory. Maintenance work still records
 facts, risk, authority, validation, and review evidence.
 
+## Spec-Driven Parent Issue
+
+For feature delivery, use one spec-driven parent issue as the ordered slice
+ledger. Begin with the [issue template](.github/ISSUE_TEMPLATE/spec-driven-change.md),
+link each tracked [design](docs/design/) and [implementation plan](docs/plans/),
+and expose `Design`, `Plan`, and `PR` for every slice. The canonical
+[feature-development workflow](.sdd/modules/workflows/feature-development.md)
+requires those links before their gated phases and marks a slice complete only
+after merge and the issue update; sub-issues are not required. P0 issue #3 is
+the dogfood example.
+
 ## Authority and safe defaults
 
 The reusable repository starts with:
