@@ -4,8 +4,8 @@ import errno
 import hashlib
 import json
 import os
+import secrets
 import stat
-import tempfile
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 
@@ -129,6 +129,7 @@ class _WritePreflight:
     sdd_identity: _DirectoryIdentity
     prior_manifest: AdapterManifest | None
     manifest_payload: bytes | None
+    manifest_was_missing: bool
 
 
 @dataclass
@@ -260,6 +261,7 @@ def write_agent_adapters(root: Path, plan: AdapterPlan) -> None:
 def _write_agent_adapters(root: Path, plan: AdapterPlan) -> None:
     _validate_manifest_plan(plan)
     repository = _validated_repository_root(root)
+    _require_live_plan(repository, plan)
     desired_manifest = _serialize_adapter_manifest_unchecked(plan)
     preflight = _preflight_adapter_write(repository, plan)
     _require_safe_write_support()
@@ -270,10 +272,11 @@ def _write_agent_adapters(root: Path, plan: AdapterPlan) -> None:
     )
 
     for output in plan.outputs:
+        prior_file = prior_files.get(output.target)
         target = repository / output.target
         _recheck_write_parents(repository, preflight)
         live = _read_regular_file_state(repository, output.target, allow_missing=True)
-        if not _accepted_output_state(live, output, prior_files.get(output.target)):
+        if not _accepted_output_state(live, output, prior_file):
             raise AdapterFailure(
                 (
                     AdapterFinding(
@@ -306,7 +309,7 @@ def _write_agent_adapters(root: Path, plan: AdapterPlan) -> None:
                 output.target,
                 allow_missing=True,
             )
-            if not _accepted_output_state(live, output, prior_files.get(output.target)):
+            if not _accepted_output_state(live, output, prior_file):
                 raise AdapterFailure(
                     (
                         AdapterFinding(
@@ -317,7 +320,17 @@ def _write_agent_adapters(root: Path, plan: AdapterPlan) -> None:
                     )
                 )
             if not _live_matches_output(live, output):
+                if prior_file is not None and live is not None and _live_matches_manifest_file(
+                    live,
+                    prior_file,
+                ):
+                    _recheck_owned_replacement_manifest(
+                        repository,
+                        desired_manifest,
+                        preflight,
+                    )
                 _commit_prepared_file(prepared, output.target.name)
+                _sync_pinned_directory(prepared.parent_fd, None)
                 committed = _read_regular_file_state_at(
                     prepared.parent_fd,
                     output.target.name,
@@ -412,6 +425,43 @@ def _write_agent_adapters(root: Path, plan: AdapterPlan) -> None:
                 )
             )
 
+        _recheck_write_parents(repository, preflight)
+        _require_live_plan(repository, plan)
+        _recheck_write_parents(repository, preflight)
+        post_source_output_findings = _verify_outputs_from_parent_fd(root_fd, plan)
+        if post_source_output_findings:
+            raise AdapterFailure(post_source_output_findings)
+
+        _recheck_write_parents(repository, preflight)
+        _validate_pinned_directory(root_fd, preflight.repository_identity, None)
+        _validate_pinned_directory(sdd_fd, preflight.sdd_identity, MANIFEST_PATH.parent)
+        _sync_pinned_directory(root_fd, None)
+        _validate_pinned_directory(root_fd, preflight.repository_identity, None)
+        _validate_pinned_directory(sdd_fd, preflight.sdd_identity, MANIFEST_PATH.parent)
+        _recheck_write_parents(repository, preflight)
+
+        final_manifest = _read_manifest_state_at(
+            sdd_fd,
+            allow_missing=True,
+        )
+        final_manifest_payload = None if final_manifest is None else final_manifest.payload
+        if (
+            (final_manifest is not None and final_manifest.executable)
+            or not _accepted_manifest_payload(
+                final_manifest_payload,
+                desired_manifest,
+                preflight,
+            )
+        ):
+            raise AdapterFailure(
+                (
+                    AdapterFinding(
+                        "invalid_manifest",
+                        MANIFEST_PATH,
+                        "adapter manifest changed during live source verification",
+                    ),
+                )
+            )
         if final_manifest_payload != desired_manifest:
             if prepared_manifest is None:
                 raise AdapterFailure(
@@ -442,6 +492,15 @@ def _write_agent_adapters(root: Path, plan: AdapterPlan) -> None:
                     ),
                 )
             )
+
+        _recheck_write_parents(repository, preflight)
+        _validate_pinned_directory(root_fd, preflight.repository_identity, None)
+        _validate_pinned_directory(sdd_fd, preflight.sdd_identity, MANIFEST_PATH.parent)
+        _sync_pinned_directory(sdd_fd, MANIFEST_PATH.parent)
+        _validate_pinned_directory(root_fd, preflight.repository_identity, None)
+        _validate_pinned_directory(sdd_fd, preflight.sdd_identity, MANIFEST_PATH.parent)
+        _recheck_write_parents(repository, preflight)
+
         post_commit_findings = _verify_outputs_from_parent_fd(root_fd, plan)
         if post_commit_findings:
             raise AdapterFailure(post_commit_findings)
@@ -461,6 +520,8 @@ def _check_agent_adapters(root: Path, plan: AdapterPlan) -> tuple[AdapterFinding
     if not inventory_is_safe:
         return _sorted_findings(list(plan_findings))
     findings = list(plan_findings)
+    if not any(finding.code == "invalid_source" for finding in plan_findings):
+        findings.extend(_live_plan_findings(repository, plan))
     desired_manifest = (
         _manifest_from_plan_unchecked(plan)
         if all(finding.code == "limit_exceeded" for finding in plan_findings)
@@ -554,12 +615,14 @@ def _preflight_adapter_write(repository: Path, plan: AdapterPlan) -> _WritePrefl
 
     prior_manifest: AdapterManifest | None = None
     manifest_payload: bytes | None = None
+    manifest_was_missing = False
     try:
         manifest_state = _read_regular_file_state(
             repository,
             MANIFEST_PATH,
             allow_missing=True,
         )
+        manifest_was_missing = manifest_state is None
         if manifest_state is not None:
             manifest_payload = manifest_state.payload
             if manifest_state.executable:
@@ -599,6 +662,7 @@ def _preflight_adapter_write(repository: Path, plan: AdapterPlan) -> _WritePrefl
         sdd_identity=sdd_identity,
         prior_manifest=prior_manifest,
         manifest_payload=manifest_payload,
+        manifest_was_missing=manifest_was_missing,
     )
 
 
@@ -808,7 +872,41 @@ def _accepted_manifest_payload(
     desired: bytes,
     preflight: _WritePreflight,
 ) -> bool:
-    return live in {None, desired, preflight.manifest_payload}
+    if live is None:
+        return preflight.manifest_was_missing
+    return live == desired or (
+        not preflight.manifest_was_missing and live == preflight.manifest_payload
+    )
+
+
+def _recheck_owned_replacement_manifest(
+    repository: Path,
+    desired: bytes,
+    preflight: _WritePreflight,
+) -> None:
+    sdd_fd = _open_pinned_directory(
+        repository / MANIFEST_PATH.parent,
+        preflight.sdd_identity,
+        MANIFEST_PATH.parent,
+    )
+    try:
+        state = _read_manifest_state_at(sdd_fd, allow_missing=True)
+        payload = None if state is None else state.payload
+        if (
+            (state is not None and state.executable)
+            or not _accepted_manifest_payload(payload, desired, preflight)
+        ):
+            raise AdapterFailure(
+                (
+                    AdapterFinding(
+                        "invalid_manifest",
+                        MANIFEST_PATH,
+                        "adapter manifest changed before an owned output replacement",
+                    ),
+                )
+            )
+    finally:
+        os.close(sdd_fd)
 
 
 def _writer_manifest_findings(
@@ -897,32 +995,65 @@ def _prepare_adapter_file(
 ) -> _PreparedAdapterFile:
     parent_fd = _open_pinned_directory(path.parent, expected_parent, parent_relative)
     prepared: _PreparedAdapterFile | None = None
+    temporary_fd: int | None = None
     try:
-        with tempfile.NamedTemporaryFile(
-            mode="wb",
-            dir=path.parent,
-            prefix=f".{path.name}.",
-            delete=False,
-        ) as temporary:
-            info = os.fstat(temporary.fileno())
-            prepared = _PreparedAdapterFile(
-                parent_fd=parent_fd,
-                temporary_name=Path(temporary.name).name,
-                device=info.st_dev,
-                inode=info.st_ino,
+        create_flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW
+        create_flags |= getattr(os, "O_CLOEXEC", 0)
+        for _ in range(128):
+            temporary_name = f".{path.name}.{secrets.token_hex(16)}"
+            try:
+                temporary_fd = os.open(
+                    temporary_name,
+                    create_flags,
+                    0o600,
+                    dir_fd=parent_fd,
+                )
+            except FileExistsError:
+                continue
+            break
+        else:
+            raise AdapterFailure(
+                (
+                    AdapterFinding(
+                        "technical_block",
+                        PurePosixPath(path.name),
+                        "unique adapter temporary could not be created",
+                    ),
+                )
             )
-            temporary.write(payload)
-            temporary.flush()
-            os.fsync(temporary.fileno())
-            os.fchmod(temporary.fileno(), 0o644)
-            os.fsync(temporary.fileno())
+
+        info = os.fstat(temporary_fd)
+        prepared = _PreparedAdapterFile(
+            parent_fd=parent_fd,
+            temporary_name=temporary_name,
+            device=info.st_dev,
+            inode=info.st_ino,
+        )
+        remaining = memoryview(payload)
+        while remaining:
+            written = os.write(temporary_fd, remaining)
+            if written <= 0:
+                raise OSError(errno.EIO, "adapter temporary write made no progress")
+            remaining = remaining[written:]
+        os.fsync(temporary_fd)
+        os.fchmod(temporary_fd, 0o644)
+        os.fsync(temporary_fd)
+        descriptor_to_close = temporary_fd
+        temporary_fd = None
+        os.close(descriptor_to_close)
         _validate_prepared_file(prepared, payload, PurePosixPath(path.name))
         return prepared
     except BaseException:
-        if prepared is not None:
-            _discard_prepared_file(prepared)
-        else:
-            os.close(parent_fd)
+        try:
+            if temporary_fd is not None:
+                descriptor_to_close = temporary_fd
+                temporary_fd = None
+                os.close(descriptor_to_close)
+        finally:
+            if prepared is not None:
+                _discard_prepared_file(prepared)
+            else:
+                os.close(parent_fd)
         raise
 
 
@@ -965,6 +1096,24 @@ def _commit_prepared_file(
         dst_dir_fd=prepared.parent_fd,
     )
     prepared.owned = False
+
+
+def _sync_pinned_directory(
+    directory_fd: int,
+    relative: PurePosixPath | None,
+) -> None:
+    try:
+        os.fsync(directory_fd)
+    except OSError:
+        raise AdapterFailure(
+            (
+                AdapterFinding(
+                    "technical_block",
+                    relative,
+                    "committed adapter directory could not be synchronized",
+                ),
+            )
+        ) from None
 
 
 def _discard_prepared_file(prepared: _PreparedAdapterFile) -> None:
@@ -1398,10 +1547,55 @@ def _validate_manifest_plan(plan: AdapterPlan) -> None:
         raise AdapterFailure(_sorted_findings(list(findings)))
 
 
+def _require_live_plan(repository: Path, plan: AdapterPlan) -> None:
+    findings = _live_plan_findings(repository, plan)
+    if findings:
+        raise AdapterFailure(_sorted_findings(list(findings)))
+
+
+def _live_plan_findings(
+    repository: Path,
+    supplied: AdapterPlan,
+) -> tuple[AdapterFinding, ...]:
+    try:
+        live = build_adapter_plan(repository)
+    except AdapterFailure as failure:
+        return failure.findings
+
+    findings: list[AdapterFinding] = []
+    if live.config_sha256 != supplied.config_sha256:
+        findings.append(
+            AdapterFinding(
+                "invalid_source",
+                CONTROL_PATH,
+                "adapter plan does not match the live adapter control",
+            )
+        )
+    if live.kernel_sha256 != supplied.kernel_sha256:
+        findings.append(
+            AdapterFinding(
+                "invalid_source",
+                KERNEL_PATH,
+                "adapter plan does not match the live shared kernel",
+            )
+        )
+    if not findings and live != supplied:
+        findings.append(
+            AdapterFinding(
+                "invalid_source",
+                None,
+                "adapter plan does not match the live fixed renderer inputs",
+            )
+        )
+    return tuple(findings)
+
+
 def _manifest_plan_findings(
     plan: AdapterPlan,
 ) -> tuple[tuple[AdapterFinding, ...], bool]:
-    expected_targets = tuple(sorted(_OUTPUTS.values(), key=lambda path: path.as_posix()))
+    expected_inventory = tuple(
+        sorted(_OUTPUTS.items(), key=lambda item: item[1].as_posix())
+    )
     if type(plan) is not AdapterPlan:
         return (
             (AdapterFinding("invalid_source", None, "adapter plan is incomplete or invalid"),),
@@ -1409,10 +1603,12 @@ def _manifest_plan_findings(
         )
     if (
         type(plan.outputs) is not tuple
-        or len(plan.outputs) != len(expected_targets)
+        or len(plan.outputs) != len(expected_inventory)
         or any(type(output) is not AdapterOutput for output in plan.outputs)
+        or any(type(output.name) is not str for output in plan.outputs)
         or any(type(output.target) is not PurePosixPath for output in plan.outputs)
-        or tuple(output.target for output in plan.outputs) != expected_targets
+        or tuple((output.name, output.target) for output in plan.outputs)
+        != expected_inventory
     ):
         return (
             (AdapterFinding("invalid_source", None, "adapter plan inventory is unsafe"),),
@@ -1430,9 +1626,15 @@ def _manifest_plan_findings(
         findings.append(
             AdapterFinding("invalid_source", None, "adapter plan is incomplete or invalid")
         )
+    shared_bodies: list[bytes] = []
     for output in plan.outputs:
+        expected_preamble = _PREAMBLES[output.name]
+        output_is_invalid = False
         if (
-            type(output.payload) is not bytes
+            type(output.preamble) is not bytes
+            or output.preamble != expected_preamble
+            or type(output.payload) is not bytes
+            or not output.payload.startswith(expected_preamble)
             or not _is_sha256(output.sha256)
             or output.sha256 != _sha256(output.payload)
             or type(output.byte_count) is not int
@@ -1440,6 +1642,10 @@ def _manifest_plan_findings(
             or type(output.line_count) is not int
             or output.line_count != output.payload.count(b"\n")
         ):
+            output_is_invalid = True
+        else:
+            shared_bodies.append(output.payload[len(expected_preamble) :])
+        if output_is_invalid:
             findings.append(
                 AdapterFinding("invalid_source", output.target, "adapter plan output is invalid")
             )
@@ -1453,6 +1659,23 @@ def _manifest_plan_findings(
                     "limit_exceeded",
                     output.target,
                     "rendered adapter exceeds a hard size limit",
+                )
+            )
+    if len(shared_bodies) == len(plan.outputs):
+        if any(body != shared_bodies[0] for body in shared_bodies[1:]):
+            findings.append(
+                AdapterFinding(
+                    "invalid_source",
+                    None,
+                    "adapter plan outputs do not share one identical body",
+                )
+            )
+        elif _is_sha256(plan.kernel_sha256) and _sha256(shared_bodies[0]) != plan.kernel_sha256:
+            findings.append(
+                AdapterFinding(
+                    "invalid_source",
+                    KERNEL_PATH,
+                    "adapter plan body does not match its kernel digest",
                 )
             )
     return tuple(findings), True

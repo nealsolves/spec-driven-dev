@@ -4,6 +4,7 @@ import hashlib
 import json
 import os
 import re
+import stat
 import tempfile
 import unittest
 from pathlib import Path, PurePosixPath
@@ -759,15 +760,22 @@ class AdapterCheckingTest(unittest.TestCase):
     def test_limit_finding_aggregates_manifest_and_fixed_target_findings(self):
         with agent_adapter_repository() as root:
             plan = self.initialize_parity(root)
-            payload = (b"x" * 16384) + b"\n"
-            oversized = dataclasses.replace(
-                plan.outputs[0],
-                payload=payload,
-                sha256=hashlib.sha256(payload).hexdigest(),
-                byte_count=len(payload),
-                line_count=payload.count(b"\n"),
+            shared_body = (b"x" * 16213) + b"\n"
+            outputs = tuple(
+                dataclasses.replace(
+                    output,
+                    payload=output.preamble + shared_body,
+                    sha256=hashlib.sha256(output.preamble + shared_body).hexdigest(),
+                    byte_count=len(output.preamble + shared_body),
+                    line_count=(output.preamble + shared_body).count(b"\n"),
+                )
+                for output in plan.outputs
             )
-            forged = dataclasses.replace(plan, outputs=(oversized, plan.outputs[1]))
+            forged = dataclasses.replace(
+                plan,
+                kernel_sha256=hashlib.sha256(shared_body).hexdigest(),
+                outputs=outputs,
+            )
             (root / agent.MANIFEST_PATH).write_bytes(b"{\n")
             (root / "AGENTS.md").unlink()
             (root / "AGENTS.md").mkdir()
@@ -780,15 +788,16 @@ class AdapterCheckingTest(unittest.TestCase):
         self.assertEqual(
             {(finding.code, finding.path) for finding in findings},
             {
-                ("limit_exceeded", PurePosixPath("AGENTS.md")),
+                ("invalid_source", agent.KERNEL_PATH),
                 ("invalid_manifest", agent.MANIFEST_PATH),
                 ("unsafe_path", PurePosixPath("AGENTS.md")),
                 ("conflicting_output", PurePosixPath("CLAUDE.md")),
+                ("limit_exceeded", PurePosixPath("CLAUDE.md")),
             },
         )
         self.assertEqual(
             {(finding.code, finding.path) for finding in raised.exception.findings},
-            {("limit_exceeded", PurePosixPath("AGENTS.md"))},
+            {("limit_exceeded", PurePosixPath("CLAUDE.md"))},
         )
 
     def test_manifest_capability_and_resource_failures_are_technical_blocks(self):
@@ -831,6 +840,108 @@ class AdapterCheckingTest(unittest.TestCase):
                 findings = agent.check_agent_adapters(root, forged)
 
         self.assertEqual({finding.code for finding in findings}, {"invalid_source"})
+
+    def test_forged_plan_names_preambles_bodies_and_kernel_digest_are_rejected(self):
+        with agent_adapter_repository() as root:
+            plan = build_adapter_plan(root)
+            agents, claude = plan.outputs
+            shared_body = agents.payload[len(agents.preamble) :]
+
+            forged_preamble = b"<!-- forged preamble -->\n\n"
+            forged_preamble_payload = forged_preamble + shared_body
+            wrong_preamble = dataclasses.replace(
+                agents,
+                preamble=forged_preamble,
+                payload=forged_preamble_payload,
+                sha256=hashlib.sha256(forged_preamble_payload).hexdigest(),
+                byte_count=len(forged_preamble_payload),
+                line_count=forged_preamble_payload.count(b"\n"),
+            )
+
+            divergent_body = shared_body.replace(b"Canonical", b"Divergent", 1)
+            divergent_payload = agents.preamble + divergent_body
+            wrong_body = dataclasses.replace(
+                agents,
+                payload=divergent_payload,
+                sha256=hashlib.sha256(divergent_payload).hexdigest(),
+                byte_count=len(divergent_payload),
+                line_count=divergent_payload.count(b"\n"),
+            )
+
+            for label, forged in (
+                (
+                    "name-to-target mapping",
+                    dataclasses.replace(
+                        plan,
+                        outputs=(dataclasses.replace(agents, name="claude"), claude),
+                    ),
+                ),
+                (
+                    "fixed preamble",
+                    dataclasses.replace(plan, outputs=(wrong_preamble, claude)),
+                ),
+                (
+                    "identical shared body",
+                    dataclasses.replace(plan, outputs=(wrong_body, claude)),
+                ),
+                (
+                    "kernel body digest",
+                    dataclasses.replace(plan, kernel_sha256="0" * 64),
+                ),
+            ):
+                with self.subTest(label=label):
+                    before = tree_snapshot(root)
+                    with self.assertRaises(AdapterFailure) as serialized:
+                        agent.serialize_adapter_manifest(forged)
+                    findings = agent.check_agent_adapters(root, forged)
+                    with self.assertRaises(AdapterFailure) as written:
+                        agent.write_agent_adapters(root, forged)
+
+                    self.assertEqual(
+                        {finding.code for finding in serialized.exception.findings},
+                        {"invalid_source"},
+                    )
+                    self.assertIn("invalid_source", {finding.code for finding in findings})
+                    self.assertEqual(
+                        {finding.code for finding in written.exception.findings},
+                        {"invalid_source"},
+                    )
+                    self.assertEqual(tree_snapshot(root), before)
+
+    def test_check_and_write_reject_plan_stale_against_live_fixed_sources(self):
+        mutations = (
+            (
+                agent.CONTROL_PATH,
+                lambda payload: b"# digest-changing comment\n" + payload,
+            ),
+            (
+                agent.KERNEL_PATH,
+                lambda payload: payload.replace(b"Canonical", b"Changed", 1),
+            ),
+        )
+        for relative, mutate in mutations:
+            with self.subTest(path=relative), agent_adapter_repository() as root:
+                stale = build_adapter_plan(root)
+                source = root / relative
+                source.write_bytes(mutate(source.read_bytes()))
+                before = tree_snapshot(root)
+
+                findings = agent.check_agent_adapters(root, stale)
+                with self.assertRaises(AdapterFailure) as raised:
+                    agent.write_agent_adapters(root, stale)
+
+                self.assertIn(
+                    ("invalid_source", relative),
+                    {(finding.code, finding.path) for finding in findings},
+                )
+                self.assertIn(
+                    ("invalid_source", relative),
+                    {
+                        (finding.code, finding.path)
+                        for finding in raised.exception.findings
+                    },
+                )
+                self.assertEqual(tree_snapshot(root), before)
 
     def test_target_io_failure_is_a_technical_block(self):
         with agent_adapter_repository() as root:
@@ -1107,6 +1218,53 @@ class AdapterWritingTest(unittest.TestCase):
         self.assertTrue(mutated)
         self.assert_failure_code(raised, "invalid_manifest")
 
+    def test_manifest_deletion_or_change_before_owned_replacement_preserves_output(self):
+        for case in ("deleted", "changed"):
+            with self.subTest(case=case), agent_adapter_repository() as root:
+                prior = self.initialize_owned(root)
+                (root / agent.KERNEL_PATH).write_text(
+                    "## Purpose and Scope\n\nChanged canonical policy.\n",
+                    encoding="utf-8",
+                )
+                desired = build_adapter_plan(root)
+                manifest = root / agent.MANIFEST_PATH
+                external = b'{"external":"ownership changed"}\n'
+                prior_outputs = {
+                    output.target: (root / output.target).read_bytes()
+                    for output in prior.outputs
+                }
+                real_prepare = agent._prepare_adapter_file
+                mutated = False
+
+                def mutate_manifest_before_preparation(*args, **kwargs):
+                    nonlocal mutated
+                    if not mutated:
+                        if case == "deleted":
+                            manifest.unlink()
+                        else:
+                            manifest.write_bytes(external)
+                        mutated = True
+                    return real_prepare(*args, **kwargs)
+
+                with mock.patch.object(
+                    agent,
+                    "_prepare_adapter_file",
+                    mutate_manifest_before_preparation,
+                ):
+                    with self.assertRaises(AdapterFailure) as raised:
+                        agent.write_agent_adapters(root, desired)
+
+                for target, payload in prior_outputs.items():
+                    self.assertEqual((root / target).read_bytes(), payload)
+                if case == "deleted":
+                    self.assertFalse(manifest.exists())
+                else:
+                    self.assertEqual(manifest.read_bytes(), external)
+                self.assertEqual(list(root.glob(".AGENTS.md.*")), [])
+                self.assertEqual(list(root.glob(".CLAUDE.md.*")), [])
+                self.assertTrue(mutated)
+                self.assert_failure_code(raised, "invalid_manifest")
+
     def test_output_drift_during_manifest_preparation_blocks_manifest_commit(self):
         with agent_adapter_repository() as root:
             plan = build_adapter_plan(root)
@@ -1138,6 +1296,86 @@ class AdapterWritingTest(unittest.TestCase):
             self.assertFalse((root / agent.MANIFEST_PATH).exists())
         self.assertTrue(mutated)
         self.assert_failure_code(raised, "conflicting_output")
+
+    def test_live_source_change_at_manifest_commit_boundary_blocks_stale_manifest(self):
+        with agent_adapter_repository() as root:
+            plan = build_adapter_plan(root)
+            kernel = root / agent.KERNEL_PATH
+            before = tree_snapshot(root)
+            changed_kernel = b"## Purpose and Scope\n\nChanged before manifest commit.\n"
+            real_read_manifest_state = agent._read_manifest_state_at
+            mutated = False
+
+            def mutate_source_before_manifest_commit(sdd_fd, **kwargs):
+                nonlocal mutated
+                if not mutated:
+                    kernel.write_bytes(changed_kernel)
+                    mutated = True
+                return real_read_manifest_state(sdd_fd, **kwargs)
+
+            with mock.patch.object(
+                agent,
+                "_read_manifest_state_at",
+                mutate_source_before_manifest_commit,
+            ):
+                with self.assertRaises(AdapterFailure) as raised:
+                    agent.write_agent_adapters(root, plan)
+
+            expected = dict(before)
+            expected[agent.KERNEL_PATH.as_posix()] = (changed_kernel, 0)
+            for output in plan.outputs:
+                expected[output.target.as_posix()] = (output.payload, 0)
+            self.assertEqual(tree_snapshot(root), expected)
+            self.assertFalse((root / agent.MANIFEST_PATH).exists())
+        self.assertTrue(mutated)
+        self.assert_failure_code(raised, "invalid_source")
+
+    def test_output_or_manifest_change_during_live_source_recheck_blocks_manifest_commit(self):
+        for boundary in ("output", "manifest"):
+            with self.subTest(boundary=boundary), agent_adapter_repository() as root:
+                plan = build_adapter_plan(root)
+                for output in plan.outputs:
+                    target = root / output.target
+                    target.write_bytes(output.payload)
+                    target.chmod(0o644)
+                before = tree_snapshot(root)
+                external = f"external {boundary} change\n".encode("utf-8")
+                real_require_live_plan = agent._require_live_plan
+                rechecks = 0
+
+                def mutate_during_commit_source_recheck(repository, supplied):
+                    nonlocal rechecks
+                    real_require_live_plan(repository, supplied)
+                    rechecks += 1
+                    if rechecks == 2:
+                        target = (
+                            root / "AGENTS.md"
+                            if boundary == "output"
+                            else root / agent.MANIFEST_PATH
+                        )
+                        target.write_bytes(external)
+
+                with mock.patch.object(
+                    agent,
+                    "_require_live_plan",
+                    mutate_during_commit_source_recheck,
+                ):
+                    with self.assertRaises(AdapterFailure) as raised:
+                        agent.write_agent_adapters(root, plan)
+
+                expected = dict(before)
+                changed_path = (
+                    "AGENTS.md"
+                    if boundary == "output"
+                    else agent.MANIFEST_PATH.as_posix()
+                )
+                expected[changed_path] = (external, 0)
+                self.assertEqual(tree_snapshot(root), expected)
+                self.assertEqual(rechecks, 2)
+                self.assert_failure_code(
+                    raised,
+                    "conflicting_output" if boundary == "output" else "invalid_manifest",
+                )
 
     def test_cleanup_preserves_replacement_entry_at_prepared_temp_name(self):
         with agent_adapter_repository() as root:
@@ -1197,6 +1435,77 @@ class AdapterWritingTest(unittest.TestCase):
             self.assertFalse((root / agent.MANIFEST_PATH).exists())
         self.assert_failure_code(raised, "technical_block")
 
+    def test_temp_close_error_is_not_retried_and_owned_path_is_cleaned(self):
+        with agent_adapter_repository() as root:
+            identity = agent._capture_directory_identity(root, None)
+            real_close = os.close
+            close_calls: list[int] = []
+            failed_descriptor: int | None = None
+
+            def fail_first_regular_close(file_descriptor):
+                nonlocal failed_descriptor
+                close_calls.append(file_descriptor)
+                info = os.fstat(file_descriptor)
+                if failed_descriptor is None and stat.S_ISREG(info.st_mode):
+                    failed_descriptor = file_descriptor
+                    raise OSError(errno.EIO, "simulated uncertain close failure")
+                return real_close(file_descriptor)
+
+            try:
+                with mock.patch.object(os, "close", fail_first_regular_close):
+                    with self.assertRaises(OSError):
+                        agent._prepare_adapter_file(
+                            root / "AGENTS.md",
+                            b"prepared payload\n",
+                            identity,
+                            None,
+                        )
+            finally:
+                if failed_descriptor is not None:
+                    try:
+                        real_close(failed_descriptor)
+                    except OSError:
+                        pass
+
+            self.assertIsNotNone(failed_descriptor)
+            self.assertEqual(close_calls.count(failed_descriptor), 1)
+            self.assertEqual(list(root.glob(".AGENTS.md.*")), [])
+            self.assertFalse((root / "AGENTS.md").exists())
+
+    def test_repository_path_replacement_before_temp_creation_creates_no_foreign_artifact(self):
+        with agent_adapter_repository() as root:
+            plan = build_adapter_plan(root)
+            before = tree_snapshot(root)
+            displaced = root.with_name("pinned-repository")
+            real_open_pinned = agent._open_pinned_directory
+            replaced = False
+
+            def replace_repository_after_pin(path, expected, relative):
+                nonlocal replaced
+                directory_fd = real_open_pinned(path, expected, relative)
+                if relative is None and not replaced:
+                    root.rename(displaced)
+                    root.mkdir()
+                    replaced = True
+                return directory_fd
+
+            with mock.patch.object(
+                agent,
+                "_open_pinned_directory",
+                replace_repository_after_pin,
+            ):
+                with self.assertRaises(AdapterFailure) as raised:
+                    agent.write_agent_adapters(root, plan)
+
+            self.assertTrue(replaced)
+            self.assertEqual(tree_snapshot(displaced), before)
+            self.assertEqual(list(root.glob(".AGENTS.md.*")), [])
+            self.assertEqual(list(root.glob(".CLAUDE.md.*")), [])
+            self.assertFalse((displaced / "AGENTS.md").exists())
+            self.assertFalse((displaced / "CLAUDE.md").exists())
+            self.assertFalse((displaced / agent.MANIFEST_PATH).exists())
+        self.assert_failure_code(raised, "unsafe_path")
+
     def test_interruption_after_first_output_converges_on_rerun(self):
         with agent_adapter_repository() as root:
             plan = build_adapter_plan(root)
@@ -1224,6 +1533,164 @@ class AdapterWritingTest(unittest.TestCase):
             self.assertEqual(agent.check_agent_adapters(root, plan), ())
         self.assertEqual(replacements, 1)
         self.assert_failure_code(raised, "technical_block")
+
+    def test_directory_sync_failures_preserve_manifest_last_and_rerun_converges(self):
+        for boundary in ("repository", ".sdd"):
+            with self.subTest(boundary=boundary), agent_adapter_repository() as root:
+                plan = build_adapter_plan(root)
+                boundary_path = root if boundary == "repository" else root / ".sdd"
+                boundary_info = boundary_path.stat()
+                real_fsync = os.fsync
+                failed = False
+
+                def fail_boundary_sync(file_descriptor):
+                    nonlocal failed
+                    info = os.fstat(file_descriptor)
+                    if (
+                        not failed
+                        and stat.S_ISDIR(info.st_mode)
+                        and info.st_dev == boundary_info.st_dev
+                        and info.st_ino == boundary_info.st_ino
+                    ):
+                        failed = True
+                        raise OSError(errno.EIO, "simulated directory sync failure")
+                    return real_fsync(file_descriptor)
+
+                with mock.patch.object(os, "fsync", fail_boundary_sync):
+                    with self.assertRaises(AdapterFailure) as raised:
+                        agent.write_agent_adapters(root, plan)
+
+                self.assertTrue(failed)
+                self.assert_failure_code(raised, "technical_block")
+                if boundary == "repository":
+                    self.assertEqual(
+                        (root / "AGENTS.md").read_bytes(),
+                        plan.outputs[0].payload,
+                    )
+                    self.assertFalse((root / "CLAUDE.md").exists())
+                    self.assertFalse((root / agent.MANIFEST_PATH).exists())
+                else:
+                    for output in plan.outputs:
+                        self.assertEqual((root / output.target).read_bytes(), output.payload)
+                    self.assertEqual(
+                        (root / agent.MANIFEST_PATH).read_bytes(),
+                        agent.serialize_adapter_manifest(plan),
+                    )
+                self.assertEqual(list(root.glob(".AGENTS.md.*")), [])
+                self.assertEqual(list(root.glob(".CLAUDE.md.*")), [])
+                self.assertEqual(list((root / ".sdd").glob(".agent-adapters.generated.json.*")), [])
+
+                agent.write_agent_adapters(root, plan)
+                self.assertEqual(agent.check_agent_adapters(root, plan), ())
+
+    def test_retry_after_final_root_sync_failure_reestablishes_both_barriers(self):
+        with agent_adapter_repository() as root:
+            plan = build_adapter_plan(root)
+            root_info = root.stat()
+            sdd_info = (root / ".sdd").stat()
+            real_fsync = os.fsync
+            root_syncs = 0
+
+            def fail_last_root_sync(file_descriptor):
+                nonlocal root_syncs
+                info = os.fstat(file_descriptor)
+                if (
+                    stat.S_ISDIR(info.st_mode)
+                    and info.st_dev == root_info.st_dev
+                    and info.st_ino == root_info.st_ino
+                ):
+                    root_syncs += 1
+                    if root_syncs == 3:
+                        raise OSError(errno.EIO, "simulated final root sync failure")
+                return real_fsync(file_descriptor)
+
+            with mock.patch.object(os, "fsync", fail_last_root_sync):
+                with self.assertRaises(AdapterFailure) as raised:
+                    agent.write_agent_adapters(root, plan)
+
+            self.assertEqual(root_syncs, 3)
+            self.assert_failure_code(raised, "technical_block")
+            for output in plan.outputs:
+                self.assertEqual((root / output.target).read_bytes(), output.payload)
+            self.assertFalse((root / agent.MANIFEST_PATH).exists())
+
+            barriers: list[str] = []
+
+            def record_retry_barriers(file_descriptor):
+                info = os.fstat(file_descriptor)
+                if stat.S_ISDIR(info.st_mode):
+                    if (
+                        info.st_dev == root_info.st_dev
+                        and info.st_ino == root_info.st_ino
+                    ):
+                        barriers.append("repository")
+                    elif (
+                        info.st_dev == sdd_info.st_dev
+                        and info.st_ino == sdd_info.st_ino
+                    ):
+                        barriers.append(".sdd")
+                return real_fsync(file_descriptor)
+
+            with mock.patch.object(os, "fsync", record_retry_barriers):
+                agent.write_agent_adapters(root, plan)
+
+            self.assertEqual(barriers, ["repository", ".sdd"])
+            self.assertEqual(agent.check_agent_adapters(root, plan), ())
+
+    def test_retry_after_sdd_sync_failure_reestablishes_both_barriers(self):
+        with agent_adapter_repository() as root:
+            plan = build_adapter_plan(root)
+            root_info = root.stat()
+            sdd_info = (root / ".sdd").stat()
+            real_fsync = os.fsync
+            failed = False
+
+            def fail_sdd_sync(file_descriptor):
+                nonlocal failed
+                info = os.fstat(file_descriptor)
+                if (
+                    not failed
+                    and stat.S_ISDIR(info.st_mode)
+                    and info.st_dev == sdd_info.st_dev
+                    and info.st_ino == sdd_info.st_ino
+                ):
+                    failed = True
+                    raise OSError(errno.EIO, "simulated .sdd sync failure")
+                return real_fsync(file_descriptor)
+
+            with mock.patch.object(os, "fsync", fail_sdd_sync):
+                with self.assertRaises(AdapterFailure) as raised:
+                    agent.write_agent_adapters(root, plan)
+
+            self.assertTrue(failed)
+            self.assert_failure_code(raised, "technical_block")
+            self.assertEqual(
+                (root / agent.MANIFEST_PATH).read_bytes(),
+                agent.serialize_adapter_manifest(plan),
+            )
+
+            barriers: list[str] = []
+
+            def record_retry_barriers(file_descriptor):
+                info = os.fstat(file_descriptor)
+                if stat.S_ISDIR(info.st_mode):
+                    if (
+                        info.st_dev == root_info.st_dev
+                        and info.st_ino == root_info.st_ino
+                    ):
+                        barriers.append("repository")
+                    elif (
+                        info.st_dev == sdd_info.st_dev
+                        and info.st_ino == sdd_info.st_ino
+                    ):
+                        barriers.append(".sdd")
+                return real_fsync(file_descriptor)
+
+            with mock.patch.object(os, "fsync", record_retry_barriers):
+                agent.write_agent_adapters(root, plan)
+
+            self.assertEqual(barriers, ["repository", ".sdd"])
+            self.assertEqual(agent.check_agent_adapters(root, plan), ())
 
     def test_final_output_verification_blocks_manifest_commit(self):
         with agent_adapter_repository() as root:

@@ -870,14 +870,32 @@ class InstructionStructureTest(unittest.TestCase):
         )
         self.assertIn("a proposed policy cannot approve its own revision", root)
 
-    def test_status_uses_only_tracked_non_self_referential_verification_evidence(self):
+    def test_status_is_capability_derived_without_volatile_delivery_claims(self):
         status = read("implementation_status.md")
 
-        self.assertNotIn(".superpowers/sdd/task-9-report.md", status)
-        self.assertNotIn("branch `HEAD`", status)
-        self.assertNotIn("exact hash is recorded", status)
-        self.assertIn("1d319c3c8c56596fd9f940ee45d9d0e7c060ef21", status)
-        self.assertIn("tracked Git history", status)
+        self.assertNotRegex(status, r"\b[0-9a-f]{40,64}\b")
+        self.assertNotRegex(status, r"\b20\d{2}-\d{2}-\d{2}\b")
+        self.assertNotRegex(status.lower(), r"\b\d+\s+tests?\b")
+        for volatile_field in (
+            "Active branch",
+            "Verified feature branch",
+            "Open pull requests",
+            "Last verified main commit",
+            "Last verified origin/main commit",
+            "Last verified feature commit",
+            "Last policy validation",
+            "Last full test result",
+        ):
+            self.assertNotIn(volatile_field, status)
+        for capability in (
+            ".sdd/adapters/root-kernel.md",
+            ".sdd/controls/adapters.yaml",
+            "CLAUDE.md",
+            "AGENTS.md",
+            "scripts/render-agent-adapters.py --root . --check",
+            "scripts/render-agent-adapters.py --root . --write",
+        ):
+            self.assertIn(capability, status)
 
     def test_operating_guide_documents_current_scope_and_compatibility(self):
         guide = read(".claude/README.md")
@@ -964,19 +982,18 @@ class InstructionStructureTest(unittest.TestCase):
         ):
             self.assertIn(principle, constitution)
 
-    def test_status_template_has_required_fields_and_states(self):
+    def test_status_template_has_stable_capability_sections_and_states(self):
         status = read("implementation_status.md")
         for field in (
-            "Active change",
-            "Active branch",
-            "Active profile",
-            "Open pull requests",
-            "Current gate",
+            "Capability Status",
+            "Canonical instruction source",
+            "Generated root adapters",
+            "Compatibility projection",
+            "Policy engine",
+            "Primary validation",
             "Deliverables",
             "Risks",
             "Deferred items",
-            "Last verified main commit",
-            "Last deployment",
         ):
             self.assertIn(field, status)
         for state in (
