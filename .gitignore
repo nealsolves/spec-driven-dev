@@ -1,5 +1,6 @@
 .worktrees/
 .superpowers/
+.sdd/state/
 docs/superpowers/
 .DS_Store
 .venv/

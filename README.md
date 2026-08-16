@@ -12,8 +12,8 @@ release, or deploy changes.
 
 - A compact [behavioral kernel](CLAUDE.md) that defines startup, authority,
   lifecycle, escalation, and completion rules.
-- Modular rules, workflows, profiles, and evidence templates under
-  [`.claude/`](.claude/README.md).
+- Modular rules, workflows, profiles, and evidence templates in the canonical
+  [`.sdd/` source tree](.sdd/README.md).
 - Four machine-readable control files for project identity, routing, policy,
   and lifecycle decisions.
 - Four JSON Schemas and a local policy engine for deterministic validation and
@@ -56,8 +56,9 @@ Windows PowerShell users can activate the environment with:
 ## Initialize the project policy
 
 Before enabling publication or production actions, replace the placeholders
-and explicit `unknown` values in [`.claude/project.yaml`](.claude/project.yaml)
-with facts supported by repository or owner evidence.
+and explicit `unknown` values in
+[`.sdd/controls/project.yaml`](.sdd/controls/project.yaml) with facts supported
+by repository or owner evidence.
 
 Configure these areas in order:
 
@@ -82,7 +83,7 @@ not invent plausible install, test, release, deployment, or rollback commands
 to satisfy initialization.
 
 Follow the detailed
-[project-initialization workflow](.claude/workflows/project-initialization.md)
+[project-initialization workflow](.sdd/modules/workflows/project-initialization.md)
 for its gates, evidence, and stop conditions.
 
 ## Validate the template
@@ -99,6 +100,14 @@ Useful direct checks are:
 .venv/bin/python -m pip install -r requirements-test.txt
 .venv/bin/python scripts/policy-engine.py validate --root .
 .venv/bin/python -m unittest discover -s tests -p 'test_*.py'
+```
+
+The primary validator rejects compatibility drift. To inspect or regenerate the
+compatibility projection directly, run:
+
+```bash
+.venv/bin/python scripts/render-compatibility.py --root . --check
+.venv/bin/python scripts/render-compatibility.py --root . --write
 ```
 
 To validate a feature or maintenance context as well:
@@ -118,7 +127,7 @@ For a feature:
 
 1. Record the intent and choose the feature workflow.
 2. Create an instruction context from the
-   [feature context template](.claude/templates/feature-instruction-context.md).
+   [feature context template](.sdd/modules/templates/feature-instruction-context.md).
 3. Attach repository evidence to each observable fact.
 4. Run policy evaluation to derive classifications, risk, authority, modules,
    workflows, and evidence hashes.
@@ -127,7 +136,7 @@ For a feature:
    permits completion or produces a bounded escalation packet.
 
 Documentation, dependency hygiene, repository setup, and similar reduced-scope
-work can use the [maintenance workflow](.claude/workflows/maintenance.md)
+work can use the [maintenance workflow](.sdd/modules/workflows/maintenance.md)
 without creating a fake feature directory. Maintenance work still records
 facts, risk, authority, validation, and review evidence.
 
@@ -160,9 +169,11 @@ then escalate only genuinely material or authority-bound decisions.
 ## Agent and Spec Kit compatibility
 
 This repository is **Claude-first**: its primary instruction entry point is
-[`CLAUDE.md`](CLAUDE.md), with detailed guidance and controls under `.claude/`.
-Another coding agent can use the template only when it reads and follows those
-same files; compatibility is not universal or automatic.
+[`CLAUDE.md`](CLAUDE.md). `.sdd/` is the authoritative source for detailed
+guidance and controls. `.claude/` is generated compatibility output; do not edit it directly.
+The P0 legacy policy engine still reads `.claude/`. Another coding agent can use
+the template only when it reads and follows the kernel and canonical sources;
+compatibility is not universal or automatic.
 
 [GitHub Spec Kit](https://github.com/github/spec-kit) is an optional compatible
 workflow reference for specification-driven development. It is not bundled,
@@ -177,17 +188,17 @@ install Spec Kit or an installed version lacks a referenced command.
 
 ```text
 CLAUDE.md                         Behavioral kernel and normative startup contract
-.claude/
+.sdd/                             Authoritative instruction source
 ├── README.md                    Detailed operating guide
-├── project.yaml                 Identity, ownership, environments, and permissions
-├── routing.yaml                 Facts, classifications, workflows, and modules
-├── policy.yaml                  Risk, authority, exceptions, and resource limits
-├── lifecycle.yaml               States, transitions, recoveries, and terminal paths
+├── controls/                    Identity, routing, policy, and lifecycle controls
 ├── schemas/                     Four JSON Schema contracts
-├── rules/                       Focused engineering and assurance guidance
-├── workflows/                   Initialization, delivery, maintenance, and release flows
-├── profiles/                    Solo, team, prototype, and regulated profiles
-└── templates/                   Context and evidence forms
+└── modules/                     Rules, workflows, profiles, and templates
+.claude/                          Generated compatibility tree for P0 execution
+├── README.md                    Byte-identical operating-guide projection
+├── project.yaml                 Generated compatibility control output
+├── schemas/                     Generated compatibility schemas
+└── rules/, workflows/, profiles/, templates/
+                                  Generated compatibility modules
 .specify/memory/constitution.md  Non-negotiable governing principles
 scripts/policy-engine.py         Four-command deterministic policy CLI
 scripts/validate-instructions.sh Primary repository validator
@@ -196,7 +207,7 @@ requirements-test.txt           Bounded package-verification dependencies
 tests/                           Executable contracts and regression tests
 ```
 
-The [operating guide](.claude/README.md) explains how these pieces interact.
+The [operating guide](.sdd/README.md) explains how these pieces interact.
 
 ## Delivery scope
 
@@ -224,8 +235,8 @@ general policy-version migration.
 ## Detailed guidance
 
 - [Behavioral kernel](CLAUDE.md)
-- [Modular delivery operating guide](.claude/README.md)
-- [Project initialization workflow](.claude/workflows/project-initialization.md)
+- [Modular delivery operating guide](.sdd/README.md)
+- [Project initialization workflow](.sdd/modules/workflows/project-initialization.md)
 - [Delivery constitution](.specify/memory/constitution.md)
 
 The README is an onboarding layer. If it conflicts with the behavioral kernel

@@ -39,7 +39,7 @@ class ReadmeGuidanceTest(unittest.TestCase):
             "source .venv/bin/activate",
             "python -m pip install -r requirements-policy.txt",
             "bash scripts/validate-instructions.sh",
-            ".claude/project.yaml",
+            ".sdd/controls/project.yaml",
         ):
             self.assertIn(required, self.text)
 
@@ -56,6 +56,25 @@ class ReadmeGuidanceTest(unittest.TestCase):
             "not bundled",
             "Phase 2",
             "Deferred",
+        ):
+            self.assertIn(required, self.text)
+
+    def test_readme_identifies_canonical_and_generated_boundaries(self):
+        for required in (
+            "`.sdd/` is the authoritative source",
+            "`.claude/` is generated compatibility output; do not edit it directly.",
+            "scripts/render-compatibility.py --root . --check",
+            "scripts/render-compatibility.py --root . --write",
+            "The P0 legacy policy engine still reads `.claude/`.",
+        ):
+            self.assertIn(required, self.text)
+
+    def test_authoring_links_target_canonical_sources(self):
+        for required in (
+            ".sdd/README.md",
+            ".sdd/controls/project.yaml",
+            ".sdd/modules/workflows/project-initialization.md",
+            ".sdd/modules/templates/feature-instruction-context.md",
         ):
             self.assertIn(required, self.text)
 

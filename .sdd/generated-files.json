@@ -1,0 +1,321 @@
+{
+  "files": [
+    {
+      "executable": false,
+      "output_sha256": "1f2c3b3c2ab320afc7023f25379a326661f41b1f7614ad0dbcc6792e52117985",
+      "source": ".sdd/README.md",
+      "source_sha256": "1f2c3b3c2ab320afc7023f25379a326661f41b1f7614ad0dbcc6792e52117985",
+      "target": ".claude/README.md"
+    },
+    {
+      "executable": false,
+      "output_sha256": "6206849dd35f57a97ba48930a638178ad7132836baf7687bdd32560a595476ba",
+      "source": ".sdd/controls/lifecycle.yaml",
+      "source_sha256": "6206849dd35f57a97ba48930a638178ad7132836baf7687bdd32560a595476ba",
+      "target": ".claude/lifecycle.yaml"
+    },
+    {
+      "executable": false,
+      "output_sha256": "6a61387881921afd66e83d7781ab1186d469149ebf56c2220cb7ee008396d4b1",
+      "source": ".sdd/controls/policy.yaml",
+      "source_sha256": "6a61387881921afd66e83d7781ab1186d469149ebf56c2220cb7ee008396d4b1",
+      "target": ".claude/policy.yaml"
+    },
+    {
+      "executable": false,
+      "output_sha256": "32ba159d30e97d986dbacdecf8b3f669dd13c16308bcc735e2987a46662904de",
+      "source": ".sdd/controls/project.yaml",
+      "source_sha256": "32ba159d30e97d986dbacdecf8b3f669dd13c16308bcc735e2987a46662904de",
+      "target": ".claude/project.yaml"
+    },
+    {
+      "executable": false,
+      "output_sha256": "0b841279ab42c356c5fcb750a175497abfb4f3097cf23e958be90835b3cbb62b",
+      "source": ".sdd/controls/routing.yaml",
+      "source_sha256": "0b841279ab42c356c5fcb750a175497abfb4f3097cf23e958be90835b3cbb62b",
+      "target": ".claude/routing.yaml"
+    },
+    {
+      "executable": false,
+      "output_sha256": "b436e1b52763c8a1a9293afac1575ccd101dab72ce938949ddd0fcede9c0064a",
+      "source": ".sdd/modules/profiles/prototype.md",
+      "source_sha256": "b436e1b52763c8a1a9293afac1575ccd101dab72ce938949ddd0fcede9c0064a",
+      "target": ".claude/profiles/prototype.md"
+    },
+    {
+      "executable": false,
+      "output_sha256": "bf4a0490dbb93f3c18ea0bbff8a37fa1c6c773fdee9433f54ba8a60143191520",
+      "source": ".sdd/modules/profiles/regulated.md",
+      "source_sha256": "bf4a0490dbb93f3c18ea0bbff8a37fa1c6c773fdee9433f54ba8a60143191520",
+      "target": ".claude/profiles/regulated.md"
+    },
+    {
+      "executable": false,
+      "output_sha256": "1189fa7dbf0338e81bd4936e6aab6e5fa62a44836ec0f352b7ce98c076478ad0",
+      "source": ".sdd/modules/profiles/solo-developer.md",
+      "source_sha256": "1189fa7dbf0338e81bd4936e6aab6e5fa62a44836ec0f352b7ce98c076478ad0",
+      "target": ".claude/profiles/solo-developer.md"
+    },
+    {
+      "executable": false,
+      "output_sha256": "91ae84033bf55af224025e8df5cebaa76726659ef179163274b88065e1deb239",
+      "source": ".sdd/modules/profiles/team.md",
+      "source_sha256": "91ae84033bf55af224025e8df5cebaa76726659ef179163274b88065e1deb239",
+      "target": ".claude/profiles/team.md"
+    },
+    {
+      "executable": false,
+      "output_sha256": "5bd97601c24f5af7f33beb3f22167e07021e99d850b9445caa5906a8d9f3c592",
+      "source": ".sdd/modules/rules/ai-systems.md",
+      "source_sha256": "5bd97601c24f5af7f33beb3f22167e07021e99d850b9445caa5906a8d9f3c592",
+      "target": ".claude/rules/ai-systems.md"
+    },
+    {
+      "executable": false,
+      "output_sha256": "a68ac2f8b3a97a4e6d4a98cad711c82c8201b24b240fa3b34c79ead3c87ab1a6",
+      "source": ".sdd/modules/rules/architecture.md",
+      "source_sha256": "a68ac2f8b3a97a4e6d4a98cad711c82c8201b24b240fa3b34c79ead3c87ab1a6",
+      "target": ".claude/rules/architecture.md"
+    },
+    {
+      "executable": false,
+      "output_sha256": "3df9757bf13f6a004b6175cb0213a988fa322c933bd145a8966015c43db1aea8",
+      "source": ".sdd/modules/rules/compliance.md",
+      "source_sha256": "3df9757bf13f6a004b6175cb0213a988fa322c933bd145a8966015c43db1aea8",
+      "target": ".claude/rules/compliance.md"
+    },
+    {
+      "executable": false,
+      "output_sha256": "3bd3b13a6b3f602af93689cf03dda16d14f11b3e24bd6513b87301a211fc8bed",
+      "source": ".sdd/modules/rules/data-privacy.md",
+      "source_sha256": "3bd3b13a6b3f602af93689cf03dda16d14f11b3e24bd6513b87301a211fc8bed",
+      "target": ".claude/rules/data-privacy.md"
+    },
+    {
+      "executable": false,
+      "output_sha256": "3429621095289e46563bad3bf0835cc7b5a88276abd8f43bd3d66a3eb0052396",
+      "source": ".sdd/modules/rules/documentation.md",
+      "source_sha256": "3429621095289e46563bad3bf0835cc7b5a88276abd8f43bd3d66a3eb0052396",
+      "target": ".claude/rules/documentation.md"
+    },
+    {
+      "executable": false,
+      "output_sha256": "85253699313c8178ab4799be789118ca30051368650609a327dab980edb55f63",
+      "source": ".sdd/modules/rules/engineering.md",
+      "source_sha256": "85253699313c8178ab4799be789118ca30051368650609a327dab980edb55f63",
+      "target": ".claude/rules/engineering.md"
+    },
+    {
+      "executable": false,
+      "output_sha256": "2d2f683b6d29af17ea13d195126911442085463fa0346a28ba833c07c6da6948",
+      "source": ".sdd/modules/rules/observability.md",
+      "source_sha256": "2d2f683b6d29af17ea13d195126911442085463fa0346a28ba833c07c6da6948",
+      "target": ".claude/rules/observability.md"
+    },
+    {
+      "executable": false,
+      "output_sha256": "a7598e94859f6d947a300e7034c882c15c79625eed072da1d943c5d24becc8a3",
+      "source": ".sdd/modules/rules/ownership.md",
+      "source_sha256": "a7598e94859f6d947a300e7034c882c15c79625eed072da1d943c5d24becc8a3",
+      "target": ".claude/rules/ownership.md"
+    },
+    {
+      "executable": false,
+      "output_sha256": "2f8fdc68808a6994e042e2667f94904ead2a2ec9b5d3a5f367f194f0f64ee092",
+      "source": ".sdd/modules/rules/production-readiness.md",
+      "source_sha256": "2f8fdc68808a6994e042e2667f94904ead2a2ec9b5d3a5f367f194f0f64ee092",
+      "target": ".claude/rules/production-readiness.md"
+    },
+    {
+      "executable": false,
+      "output_sha256": "4442dc352162caef96e4b891df6d37b106835a07a41e5c117bbeb08f05b71533",
+      "source": ".sdd/modules/rules/release-management.md",
+      "source_sha256": "4442dc352162caef96e4b891df6d37b106835a07a41e5c117bbeb08f05b71533",
+      "target": ".claude/rules/release-management.md"
+    },
+    {
+      "executable": false,
+      "output_sha256": "b972d3af579f78e118c9cb72bddeb664ab2481a41a5b15246af9b9c78258d9a3",
+      "source": ".sdd/modules/rules/security.md",
+      "source_sha256": "b972d3af579f78e118c9cb72bddeb664ab2481a41a5b15246af9b9c78258d9a3",
+      "target": ".claude/rules/security.md"
+    },
+    {
+      "executable": false,
+      "output_sha256": "1cb87c5e6e49cc7ebd16eb71b284883ee035e35527dca7336c7bbede298ed9ef",
+      "source": ".sdd/modules/rules/testing.md",
+      "source_sha256": "1cb87c5e6e49cc7ebd16eb71b284883ee035e35527dca7336c7bbede298ed9ef",
+      "target": ".claude/rules/testing.md"
+    },
+    {
+      "executable": false,
+      "output_sha256": "bf60abd4b83226d79f99b156d0d2cbaabc3a743703dce98ebf13984cd02a152a",
+      "source": ".sdd/modules/templates/adr-template.md",
+      "source_sha256": "bf60abd4b83226d79f99b156d0d2cbaabc3a743703dce98ebf13984cd02a152a",
+      "target": ".claude/templates/adr-template.md"
+    },
+    {
+      "executable": false,
+      "output_sha256": "b822b523635a71fae21c773dded95e0259542a7c0a0971895ff92a1f2fec46ec",
+      "source": ".sdd/modules/templates/compliance-mapping-template.md",
+      "source_sha256": "b822b523635a71fae21c773dded95e0259542a7c0a0971895ff92a1f2fec46ec",
+      "target": ".claude/templates/compliance-mapping-template.md"
+    },
+    {
+      "executable": false,
+      "output_sha256": "0cff4e707faabc15dbb3b3765dc13fa0cfc7c8a61528595995a7266ef30817b7",
+      "source": ".sdd/modules/templates/feature-instruction-context.md",
+      "source_sha256": "0cff4e707faabc15dbb3b3765dc13fa0cfc7c8a61528595995a7266ef30817b7",
+      "target": ".claude/templates/feature-instruction-context.md"
+    },
+    {
+      "executable": false,
+      "output_sha256": "4a08a35fca49bc7fd6ad15fcbdc920d7cba23a87c24a5a173269ff61c638b22e",
+      "source": ".sdd/modules/templates/incident-record-template.md",
+      "source_sha256": "4a08a35fca49bc7fd6ad15fcbdc920d7cba23a87c24a5a173269ff61c638b22e",
+      "target": ".claude/templates/incident-record-template.md"
+    },
+    {
+      "executable": false,
+      "output_sha256": "0dc7e31323c931708e0624c1aee42eb6c769f1386ed34e509c316d7b0286fcc1",
+      "source": ".sdd/modules/templates/maintenance-record-template.md",
+      "source_sha256": "0dc7e31323c931708e0624c1aee42eb6c769f1386ed34e509c316d7b0286fcc1",
+      "target": ".claude/templates/maintenance-record-template.md"
+    },
+    {
+      "executable": false,
+      "output_sha256": "2e2b766256e5e7340ed818c9b01a4427ddf084a95ce3b84595385ec07fa81708",
+      "source": ".sdd/modules/templates/observability-plan-template.md",
+      "source_sha256": "2e2b766256e5e7340ed818c9b01a4427ddf084a95ce3b84595385ec07fa81708",
+      "target": ".claude/templates/observability-plan-template.md"
+    },
+    {
+      "executable": false,
+      "output_sha256": "8dce0842a8966e010fb69e7e124587ab4d1ceb1fc89601e766c9422c34abd7ff",
+      "source": ".sdd/modules/templates/privacy-assessment-template.md",
+      "source_sha256": "8dce0842a8966e010fb69e7e124587ab4d1ceb1fc89601e766c9422c34abd7ff",
+      "target": ".claude/templates/privacy-assessment-template.md"
+    },
+    {
+      "executable": false,
+      "output_sha256": "1e24ab6e60a74d9667bae962c68ab2dd1feae3f1572fe94624833da5f22ba139",
+      "source": ".sdd/modules/templates/production-readiness-template.md",
+      "source_sha256": "1e24ab6e60a74d9667bae962c68ab2dd1feae3f1572fe94624833da5f22ba139",
+      "target": ".claude/templates/production-readiness-template.md"
+    },
+    {
+      "executable": false,
+      "output_sha256": "69970afb900f6601c4d137e376c418347a3a878a7b023869861946f84a5361a0",
+      "source": ".sdd/modules/templates/release-readiness-template.md",
+      "source_sha256": "69970afb900f6601c4d137e376c418347a3a878a7b023869861946f84a5361a0",
+      "target": ".claude/templates/release-readiness-template.md"
+    },
+    {
+      "executable": false,
+      "output_sha256": "fb7b0f76475b2c2f7901c95cd6f8eff93b82b2a4605eb72848bb242625b5e729",
+      "source": ".sdd/modules/templates/risk-exception-template.md",
+      "source_sha256": "fb7b0f76475b2c2f7901c95cd6f8eff93b82b2a4605eb72848bb242625b5e729",
+      "target": ".claude/templates/risk-exception-template.md"
+    },
+    {
+      "executable": false,
+      "output_sha256": "eb998b73ba80e3e9046fb143a6a41054518cb591efdca1019c12f43c7a1f0770",
+      "source": ".sdd/modules/templates/threat-model-template.md",
+      "source_sha256": "eb998b73ba80e3e9046fb143a6a41054518cb591efdca1019c12f43c7a1f0770",
+      "target": ".claude/templates/threat-model-template.md"
+    },
+    {
+      "executable": false,
+      "output_sha256": "db59f0ab7a3c53e205db9a840f0879669ad089b7eaddd3318173946685d5dc12",
+      "source": ".sdd/modules/workflows/brownfield-change.md",
+      "source_sha256": "db59f0ab7a3c53e205db9a840f0879669ad089b7eaddd3318173946685d5dc12",
+      "target": ".claude/workflows/brownfield-change.md"
+    },
+    {
+      "executable": false,
+      "output_sha256": "b88346545c347b2748f4c8407b6bde6748bf625909989fc9badbca5715d32e53",
+      "source": ".sdd/modules/workflows/bug-fix.md",
+      "source_sha256": "b88346545c347b2748f4c8407b6bde6748bf625909989fc9badbca5715d32e53",
+      "target": ".claude/workflows/bug-fix.md"
+    },
+    {
+      "executable": false,
+      "output_sha256": "1ba44a49962201a70ff83cd28ae03adaf1f48207d443ef707a384d31e69278b6",
+      "source": ".sdd/modules/workflows/dependency-update.md",
+      "source_sha256": "1ba44a49962201a70ff83cd28ae03adaf1f48207d443ef707a384d31e69278b6",
+      "target": ".claude/workflows/dependency-update.md"
+    },
+    {
+      "executable": false,
+      "output_sha256": "965e37840aa404db972c562017208d66fc04acba38e3536c64a146c74c50e3d2",
+      "source": ".sdd/modules/workflows/feature-development.md",
+      "source_sha256": "965e37840aa404db972c562017208d66fc04acba38e3536c64a146c74c50e3d2",
+      "target": ".claude/workflows/feature-development.md"
+    },
+    {
+      "executable": false,
+      "output_sha256": "4c38826bc19a5a24f1a17f320eeef8eb324c8a88ac99d93039f4f0010f14082d",
+      "source": ".sdd/modules/workflows/incident-hotfix.md",
+      "source_sha256": "4c38826bc19a5a24f1a17f320eeef8eb324c8a88ac99d93039f4f0010f14082d",
+      "target": ".claude/workflows/incident-hotfix.md"
+    },
+    {
+      "executable": false,
+      "output_sha256": "b5783b858051d8257fb79bffc0ee611f5a0aca5025d89ed04bcbc5215d084ac8",
+      "source": ".sdd/modules/workflows/instruction-system-change.md",
+      "source_sha256": "b5783b858051d8257fb79bffc0ee611f5a0aca5025d89ed04bcbc5215d084ac8",
+      "target": ".claude/workflows/instruction-system-change.md"
+    },
+    {
+      "executable": false,
+      "output_sha256": "da93ebb1ec69d38f128299e4cc178104ffcecd0670d6692634e5fddb8f555bb2",
+      "source": ".sdd/modules/workflows/maintenance.md",
+      "source_sha256": "da93ebb1ec69d38f128299e4cc178104ffcecd0670d6692634e5fddb8f555bb2",
+      "target": ".claude/workflows/maintenance.md"
+    },
+    {
+      "executable": false,
+      "output_sha256": "ade679e413806350e663f93414b6d636d8baa5ba3736727d49fac82abc955384",
+      "source": ".sdd/modules/workflows/project-initialization.md",
+      "source_sha256": "ade679e413806350e663f93414b6d636d8baa5ba3736727d49fac82abc955384",
+      "target": ".claude/workflows/project-initialization.md"
+    },
+    {
+      "executable": false,
+      "output_sha256": "b32afa143f87950f82afffeacd47f4e16041aa69cea9a37b2ff834950c6e1154",
+      "source": ".sdd/modules/workflows/release.md",
+      "source_sha256": "b32afa143f87950f82afffeacd47f4e16041aa69cea9a37b2ff834950c6e1154",
+      "target": ".claude/workflows/release.md"
+    },
+    {
+      "executable": false,
+      "output_sha256": "167ab2b50bcc156cfda21849b4334640efb2d6dbcc905c2a374d827280016528",
+      "source": ".sdd/schemas/context.schema.json",
+      "source_sha256": "167ab2b50bcc156cfda21849b4334640efb2d6dbcc905c2a374d827280016528",
+      "target": ".claude/schemas/context.schema.json"
+    },
+    {
+      "executable": false,
+      "output_sha256": "b5e969cedad7b1e3c2f64ed6e90843d35e3bdff973377c2e94d95c0f9bda217d",
+      "source": ".sdd/schemas/policy.schema.json",
+      "source_sha256": "b5e969cedad7b1e3c2f64ed6e90843d35e3bdff973377c2e94d95c0f9bda217d",
+      "target": ".claude/schemas/policy.schema.json"
+    },
+    {
+      "executable": false,
+      "output_sha256": "6ed0ba5807f191dce1750c7ab1ca8dcb58f01b45370d5d503afb6e778033af9b",
+      "source": ".sdd/schemas/project.schema.json",
+      "source_sha256": "6ed0ba5807f191dce1750c7ab1ca8dcb58f01b45370d5d503afb6e778033af9b",
+      "target": ".claude/schemas/project.schema.json"
+    },
+    {
+      "executable": false,
+      "output_sha256": "0c0baa7f016fea984347601806499cfd788f4b9a6c63651c624d677ba1752938",
+      "source": ".sdd/schemas/routing.schema.json",
+      "source_sha256": "0c0baa7f016fea984347601806499cfd788f4b9a6c63651c624d677ba1752938",
+      "target": ".claude/schemas/routing.schema.json"
+    }
+  ],
+  "format_version": 1,
+  "renderer": "sdd.adapters.compatibility:v1"
+}

@@ -1,0 +1,9 @@
+{
+  "baseline_commit": "43839f372501de7453beef9e3df7f35f03f9b251",
+  "manifest_format_version": 1,
+  "manifest_sha256": "2d4be624cc96d4852a4ba23fcf4f652cf61e1083ae97a73358d795f81e77e851",
+  "migration_id": "0001-claude-to-sdd",
+  "renderer": "sdd.adapters.compatibility:v1",
+  "source_layout": ".claude",
+  "target_layout": ".sdd"
+}
